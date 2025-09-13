@@ -23,18 +23,21 @@ def notice_exists(notice_id: str) -> bool:
     return len(res.data) > 0
 
 def save_to_supabase(file_bytes, filename, url):
-    notice_id = url_to_id(url)
+    notice_id = url  # if using URL as unique ID
 
-    # Check if already exists
     if notice_exists(notice_id):
         print(f"⚠️ Already exists in Supabase: {filename}")
         return False
 
-    # 1. Upload file to storage
     path_in_bucket = f"notices/{filename}"
-    supabase.storage.from_("notices").upload(path_in_bucket, file_bytes, {"upsert": True})
 
-    # 2. Insert metadata row
+    # ✅ Correct call
+    supabase.storage.from_("notices").upload(
+        path_in_bucket,
+        file_bytes,
+        file_options={"upsert": "true"}   # string, not bool
+    )
+
     supabase.table("notices").insert({
         "id": notice_id,
         "url": url,
@@ -45,6 +48,7 @@ def save_to_supabase(file_bytes, filename, url):
 
     print(f"✅ Stored in Supabase + table: {filename}")
     return True
+
 
 # --- SCRAPER ---
 def run_scraper():
