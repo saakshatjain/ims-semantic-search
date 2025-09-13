@@ -23,7 +23,7 @@ def notice_exists(notice_id: str) -> bool:
     return len(res.data) > 0
 
 def save_to_supabase(file_bytes, filename, url):
-    notice_id = url  # if using URL as unique ID
+    notice_id = filename  # Use filename as unique ID
 
     if notice_exists(notice_id):
         print(f"⚠️ Already exists in Supabase: {filename}")
@@ -31,11 +31,11 @@ def save_to_supabase(file_bytes, filename, url):
 
     path_in_bucket = f"notices/{filename}"
 
-    # ✅ Correct call
+    # ✅ Correct call with upsert as string
     supabase.storage.from_("notices").upload(
         path_in_bucket,
         file_bytes,
-        file_options={"upsert": "true"}   # string, not bool
+        file_options={"upsert": "true"}
     )
 
     supabase.table("notices").insert({
