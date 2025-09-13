@@ -3,3 +3,9 @@ beautifulsoup4
 pandas
 supabase
 dotenv
+pymupdf
+pdfplumber
+camelot-py[cv]
+pytesseract
+pandas
+Pillow
