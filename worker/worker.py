@@ -14,7 +14,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 def fetch_pdf(file_path: str) -> bytes:
     """Download PDF from Supabase storage"""
     res = supabase.storage.from_("notices").download(file_path)
-    return res.read()
+    return res
 
 def extract_text_and_tables(pdf_bytes: bytes):
     text_content = []
