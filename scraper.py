@@ -63,7 +63,6 @@ def run_scraper():
             links.append(url)
 
     # Take last 10 notices only
-    links = links[-10:]
 
     for i, url in enumerate(links, 1):
         url = url.replace("/view", "/edit")
