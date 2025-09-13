@@ -22,8 +22,10 @@ def notice_exists(notice_id: str) -> bool:
     res = supabase.table("notices").select("id").eq("id", notice_id).execute()
     return len(res.data) > 0
 
+import hashlib
+
 def save_to_supabase(file_bytes, filename, url):
-    notice_id = filename  # Use filename as unique ID
+    notice_id = hashlib.sha256(file_bytes).hexdigest()[:32]  # 32-char hash
 
     if notice_exists(notice_id):
         print(f"⚠️ Already exists in Supabase: {filename}")
@@ -31,7 +33,6 @@ def save_to_supabase(file_bytes, filename, url):
 
     path_in_bucket = f"notices/{filename}"
 
-    # ✅ Correct call with upsert as string
     supabase.storage.from_("notices").upload(
         path_in_bucket,
         file_bytes,
