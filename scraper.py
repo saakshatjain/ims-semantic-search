@@ -14,16 +14,16 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- HELPERS ---
-def sha256_of_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+def url_to_id(url: str) -> str:
+    """Generate a stable ID from the notice URL."""
+    return hashlib.sha256(url.encode()).hexdigest()[:32]  # 32 chars
 
 def notice_exists(notice_id: str) -> bool:
     res = supabase.table("notices").select("id").eq("id", notice_id).execute()
     return len(res.data) > 0
 
-
 def save_to_supabase(file_bytes, filename, url):
-    notice_id = sha256_of_bytes(file_bytes)
+    notice_id = url_to_id(url)
 
     # Check if already exists
     if notice_exists(notice_id):
@@ -32,14 +32,14 @@ def save_to_supabase(file_bytes, filename, url):
 
     # 1. Upload file to storage
     path_in_bucket = f"notices/{filename}"
-    supabase.storage.from_("notices").upload(path_in_bucket, file_bytes)
+    supabase.storage.from_("notices").upload(path_in_bucket, file_bytes, {"upsert": True})
 
-    # 2. Insert metadata row (aligned with schema)
+    # 2. Insert metadata row
     supabase.table("notices").insert({
         "id": notice_id,
         "url": url,
         "filename": filename,
-        "status": "pending",                       # for worker
+        "status": "pending",
         "uploaded_at": datetime.now(timezone.utc).isoformat()
     }).execute()
 
