@@ -2,7 +2,11 @@ name: Notices Pipeline
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # every 5 minutes
+    # Runs at 06:00, 11:00, 16:00, 21:00 Asia/Kolkata (IST) — converted to UTC for GitHub Actions
+    - cron: "30 0 * * *"   # 06:00 IST
+    - cron: "30 5 * * *"   # 11:00 IST
+    - cron: "30 10 * * *"  # 16:00 IST
+    - cron: "30 15 * * *"  # 21:00 IST
   workflow_dispatch:        # manual trigger
 
 jobs:
