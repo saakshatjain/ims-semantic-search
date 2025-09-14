@@ -2,7 +2,7 @@ name: Notices Pipeline
 
 on:
   schedule:
-    # Runs at 06:00, 11:00, 16:00, 21:00 Asia/Kolkata (IST) — converted to UTC for GitHub Actions
+    # Runs at 06:00, 11:00, 16:00, 21:00 IST (converted to UTC)
     - cron: "30 0 * * *"   # 06:00 IST
     - cron: "30 5 * * *"   # 11:00 IST
     - cron: "30 10 * * *"  # 16:00 IST
@@ -10,22 +10,28 @@ on:
   workflow_dispatch:        # manual trigger
 
 jobs:
-  run:
+  run-pipeline:
     runs-on: ubuntu-latest
+
     steps:
+      # 1️⃣ Checkout code
       - name: Checkout repo
         uses: actions/checkout@v3
 
+      # 2️⃣ Setup Python
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
+      # 3️⃣ Install dependencies
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run scraper
+      # 4️⃣ Run scraper and check if new notices were added
+      - name: Run scraper + conditional OCR
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python scraper.py
+        run: |
+          python scraper.py

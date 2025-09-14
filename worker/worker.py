@@ -1,4 +1,4 @@
-import os, io, tempfile
+import os, io, tempfile, json
 from datetime import datetime
 import fitz  # PyMuPDF
 import pdfplumber
@@ -6,10 +6,19 @@ import camelot
 import pytesseract
 from PIL import Image
 from supabase import create_client, Client
+from sentence_transformers import SentenceTransformer
 
+# --- Setup Supabase ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# --- Setup local embedding model ---
+embed_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+# ------------------------- #
+#   PDF Fetch + Extraction  #
+# ------------------------- #
 
 def fetch_pdf(file_path: str) -> bytes:
     """Download PDF from Supabase storage"""
@@ -17,6 +26,7 @@ def fetch_pdf(file_path: str) -> bytes:
     return res
 
 def extract_text_and_tables(pdf_bytes: bytes):
+    """Extract text + tables from PDF"""
     text_content = []
     table_data = []
 
@@ -25,14 +35,14 @@ def extract_text_and_tables(pdf_bytes: bytes):
         tmp.flush()
         pdf_path = tmp.name
 
-    # --- Extract text (if embedded) ---
+    # --- Extract embedded text ---
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
             txt = page.extract_text()
             if txt:
                 text_content.append(txt)
 
-    # --- If no text → OCR fallback ---
+    # --- OCR fallback if no embedded text ---
     if not text_content:
         doc = fitz.open(pdf_path)
         for page in doc:
@@ -55,6 +65,36 @@ def extract_text_and_tables(pdf_bytes: bytes):
 
     return "\n\n".join(text_content), table_data if table_data else None
 
+# ------------------------- #
+#     Embedding Utility     #
+# ------------------------- #
+
+def create_embedding(text: str, tables: list):
+    """Generate embeddings from text + table content"""
+    combined_content = text if text else ""
+
+    # Flatten table content into text for semantic search
+    if tables:
+        table_texts = []
+        for tbl in tables:
+            rows = [" | ".join(row) for row in tbl]
+            table_texts.append("\n".join(rows))
+        combined_content += "\n\n" + "\n\n".join(table_texts)
+
+    if not combined_content.strip():
+        return None
+
+    try:
+        vector = embed_model.encode(combined_content, convert_to_numpy=True).tolist()
+        return vector
+    except Exception as e:
+        print("⚠️ Embedding failed:", e)
+        return None
+
+# ------------------------- #
+#     Worker Main Loop      #
+# ------------------------- #
+
 def process_pending():
     notices = supabase.table("notices").select("*").eq("status", "pending").limit(5).execute()
     for n in notices.data:
@@ -69,10 +109,13 @@ def process_pending():
             pdf_bytes = fetch_pdf(n["file_path"])
             text, tables = extract_text_and_tables(pdf_bytes)
 
+            embedding = create_embedding(text, tables)
+
             supabase.table("notices").update({
                 "status": "processed",
                 "ocr_text": text,
-                "ocr_tables": tables,
+                "ocr_tables": json.dumps(tables) if tables else None,
+                "embedding": embedding,
                 "processed_at": datetime.utcnow().isoformat()
             }).eq("id", n["id"]).execute()
 

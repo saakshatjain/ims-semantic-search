@@ -17,27 +17,22 @@ def notice_exists(notice_id: str) -> bool:
     return len(res.data) > 0
 
 def save_to_supabase(file_bytes, url):
-    # 1️⃣ generate a unique ID for DB
+    """Insert new notice PDF into Supabase"""
     notice_id = hashlib.sha256(file_bytes).hexdigest()[:32]  # 32-char hash
 
     if notice_exists(notice_id):
         print(f"⚠️ Already exists in Supabase: {url}")
         return False
 
-    # 2️⃣ generate unique filename using timestamp + hash
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     short_hash = notice_id[:8]
     filename = f"notice_{timestamp}_{short_hash}.pdf"
-
     path_in_bucket = f"notices/{filename}"
 
-    # 3️⃣ upload to storage (no upsert)
-    supabase.storage.from_("notices").upload(
-        path_in_bucket,
-        file_bytes
-    )
+    # Upload to storage
+    supabase.storage.from_("notices").upload(path_in_bucket, file_bytes)
 
-    # 4️⃣ insert metadata in DB
+    # Insert metadata in DB
     supabase.table("notices").insert({
         "id": notice_id,
         "url": url,
@@ -65,15 +60,15 @@ def run_scraper():
         if url not in links:
             links.append(url)
 
-    # Take last 10 notices only
-    links = links[:10]
+    links = links[:10]  # last 10 notices
+    new_inserted = False  # flag to track new notices
 
     for i, url in enumerate(links, 1):
         url = url.replace("/view", "/edit")
         print(f"\n[{i}] Processing: {url}")
 
         try:
-            # Google Docs/Sheets/Drive export handling
+            # Google Sheets
             if "docs.google.com/spreadsheets" in url:
                 sheet_id = re.search(r"/d/([a-zA-Z0-9-_]+)", url).group(1)
                 gid_match = re.search(r"gid=(\d+)", url)
@@ -81,33 +76,51 @@ def run_scraper():
                 pdf_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=pdf&gid={gid}"
                 r = session.get(pdf_url)
                 if r.headers.get("Content-Type", "").startswith("application/pdf"):
-                    save_to_supabase(r.content, url)
+                    if save_to_supabase(r.content, url):
+                        new_inserted = True
                 continue
 
+            # Google Docs
             if "docs.google.com/document" in url:
                 doc_id = re.search(r"/d/([a-zA-Z0-9-_]+)", url).group(1)
                 pdf_url = f"https://docs.google.com/document/d/{doc_id}/export?format=pdf"
                 r = session.get(pdf_url)
                 if r.headers.get("Content-Type", "").startswith("application/pdf"):
-                    save_to_supabase(r.content, url)
+                    if save_to_supabase(r.content, url):
+                        new_inserted = True
                 continue
 
+            # Google Drive file
             if "drive.google.com/file" in url:
                 file_id = re.search(r"/d/([a-zA-Z0-9-_]+)", url).group(1)
                 dl_url = f"https://drive.google.com/uc?export=download&id={file_id}"
                 r = session.get(dl_url)
                 if r.headers.get("Content-Type", "").startswith("application/pdf"):
-                    save_to_supabase(r.content, url)
+                    if save_to_supabase(r.content, url):
+                        new_inserted = True
                 continue
 
             # Default IMSNSIT PDFs
             r = session.get(url, headers={"Referer": NOTICES})
             if "application/pdf" in r.headers.get("Content-Type", ""):
-                save_to_supabase(r.content, url)
+                if save_to_supabase(r.content, url):
+                    new_inserted = True
             else:
                 print("⚠️ Not a PDF:", url)
         except Exception as e:
             print("❌ Failed:", url, e)
 
+    return new_inserted
+
+# --- MAIN PIPELINE ---
 if __name__ == "__main__":
-    run_scraper()
+    added_new = run_scraper()
+
+    if added_new:
+        print("✅ New notices added. Running OCR worker...")
+        os.system("python worker/worker.py")  # OCR extraction
+
+        print("✅ OCR done. Running processor/embedding...")
+        os.system("python worker/processor.py")  # embeddings
+    else:
+        print("⚠️ No new notices. Skipping OCR and embeddings.")
