@@ -2,11 +2,8 @@ name: Notices Pipeline
 
 on:
   schedule:
-    # Runs at 06:00, 11:00, 16:00, 21:00 IST (converted to UTC)
-    - cron: "30 0 * * *"   # 06:00 IST
-    - cron: "30 5 * * *"   # 11:00 IST
-    - cron: "30 10 * * *"  # 16:00 IST
-    - cron: "30 15 * * *"  # 21:00 IST
+    # Runs Every hour from 09:00 to 17:00 IST 
+    - cron: "30 3-11 * * *"
   workflow_dispatch:        # manual trigger
 
 jobs:
