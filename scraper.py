@@ -44,6 +44,35 @@ def save_to_supabase(file_bytes, url):
     print(f"✅ Stored in Supabase + table: {filename}")
     return True
 
+def _get_drive_file_id(url: str):
+    m = re.search(r"/file/d/([a-zA-Z0-9_-]+)", url)
+    if m:
+        return m.group(1)
+    m = re.search(r"[?&]id=([a-zA-Z0-9_-]+)", url)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _get_confirm_token(resp):
+    for k, v in resp.cookies.items():
+        if k.startswith("download_warning"):
+            return v
+    m = re.search(r"confirm=([0-9A-Za-z_\-]+)", resp.text)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _download_drive_file(session, file_id: str) -> bytes:
+    URL = "https://docs.google.com/uc?export=download"
+    resp = session.get(URL, params={"id": file_id}, stream=True, timeout=60)
+    token = _get_confirm_token(resp)
+    if token:
+        resp = session.get(URL, params={"id": file_id, "confirm": token}, stream=True, timeout=60)
+    resp.raise_for_status()
+    return resp.content
+
 # --- SCRAPER ---
 def run_scraper():
     session = requests.Session()
@@ -91,13 +120,31 @@ def run_scraper():
                 continue
 
             # Google Drive file
-            if "drive.google.com/file" in url:
-                file_id = re.search(r"/d/([a-zA-Z0-9-_]+)", url).group(1)
+            if "drive.google.com" in url or "docs.google.com" in url:
+                file_id = _get_drive_file_id(url)
+                if not file_id:
+                    print("⚠️ Could not extract Drive file id:", url)
+                    continue
+                try:
+                    content = _download_drive_file(session, file_id)
+                except Exception as e:
+                    print("❌ Drive download failed:", url, e)
+                    continue
+
+                # basic validation: PDF header
+                if content and content[:4] == b"%PDF":
+                    if save_to_supabase(content, url):
+                        new_inserted = True
+                    continue
+
+                # fallback: try direct uc download and check headers
                 dl_url = f"https://drive.google.com/uc?export=download&id={file_id}"
                 r = session.get(dl_url)
                 if r.headers.get("Content-Type", "").startswith("application/pdf"):
                     if save_to_supabase(r.content, url):
                         new_inserted = True
+                else:
+                    print("⚠️ Drive link didn't return a PDF:", url)
                 continue
 
             # Default IMSNSIT PDFs
