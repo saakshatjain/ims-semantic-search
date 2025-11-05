@@ -6,9 +6,8 @@ dotenv
 pymupdf
 pdfplumber
 camelot-py[cv]
-pytesseract
-pandas
 Pillow
 sentence-transformers
 numpy
+textract
 

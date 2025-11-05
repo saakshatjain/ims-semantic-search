@@ -40,6 +40,7 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
+            pip install textract
           else
             pip install supabase-py sentence-transformers numpy textract pillow pdfplumber camelot-py[cv]
           fi
