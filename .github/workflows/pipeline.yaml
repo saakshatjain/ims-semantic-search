@@ -33,7 +33,8 @@ jobs:
             libxml2-dev \
             libxslt1-dev \
             antiword \
-            unrtf
+            unrtf \
+            tesseract-ocr
 
       - name: Install Python dependencies
         run: |

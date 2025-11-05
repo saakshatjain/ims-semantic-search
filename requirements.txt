@@ -5,7 +5,8 @@ supabase
 dotenv
 pymupdf
 pdfplumber
-camelot-py[cv]
+PyPDF2<3.0.0
+camelot-py[cv]==0.10.1
 Pillow
 sentence-transformers
 numpy
