@@ -12,7 +12,6 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      TESSDATA_PREFIX: /usr/share/tesseract-ocr/5.0/tessdata
 
     steps:
       - name: Checkout repo
@@ -23,31 +22,20 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install apt packages (Tesseract + PDF deps)
+      - name: Install OCR and PDF dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            tesseract-ocr \
-            tesseract-ocr-eng \
-            libtesseract-dev \
+            textract \
             poppler-utils \
             ghostscript \
-            build-essential
-          
-          # Download latest eng.traineddata directly
-          sudo mkdir -p /usr/share/tesseract-ocr/5.0/tessdata
-          sudo wget -O /usr/share/tesseract-ocr/5.0/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
-          
-          # Verify setup
-          echo "Verifying tesseract installation..."
-          tesseract --version
-          which tesseract
-          ls -la /usr/share/tesseract-ocr/5.0/tessdata/
-          echo "TESSDATA_PREFIX=$TESSDATA_PREFIX"
-          
-          # Test tesseract
-          echo "Hello World" > test.txt
-          TESSDATA_PREFIX=/usr/share/tesseract-ocr/5.0/tessdata tesseract test.txt stdout
+            build-essential \
+            python3-dev \
+            libxml2-dev \
+            libxslt1-dev \
+            antiword \
+            unrtf \
+            pstotext
 
       - name: Install Python dependencies
         run: |
@@ -55,7 +43,7 @@ jobs:
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            pip install supabase-py sentence-transformers numpy pytesseract pillow pdfplumber camelot-py[cv]
+            pip install supabase-py sentence-transformers numpy textract pillow pdfplumber camelot-py[cv]
           fi
 
       - name: Run scraper (adds new notices)
@@ -63,7 +51,5 @@ jobs:
           python -u scraper.py
 
       - name: Run worker to process new notices
-        env:
-          TESSDATA_PREFIX: /usr/share/tesseract-ocr/5.0/tessdata
         run: |
           python -u worker/worker.py

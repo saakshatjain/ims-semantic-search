@@ -3,8 +3,7 @@ from datetime import datetime
 import fitz  # PyMuPDF
 import pdfplumber
 import camelot
-import pytesseract
-from PIL import Image
+import textract
 from supabase import create_client, Client
 from sentence_transformers import SentenceTransformer
 
@@ -44,13 +43,12 @@ def extract_text_and_tables(pdf_bytes: bytes):
 
     # --- OCR fallback if no embedded text ---
     if not text_content:
-        doc = fitz.open(pdf_path)
-        for page in doc:
-            pix = page.get_pixmap(dpi=300)
-            img = Image.open(io.BytesIO(pix.tobytes("png")))
-            txt = pytesseract.image_to_string(img)
-            if txt.strip():
-                text_content.append(txt)
+        try:
+            ocr_text = textract.process(pdf_path, method='pdfminer').decode('utf-8')
+            if ocr_text.strip():
+                text_content.append(ocr_text)
+        except Exception as e:
+            print("⚠️ OCR failed:", e)
 
     # --- Extract tables ---
     try:
@@ -127,5 +125,7 @@ def process_pending():
             }).eq("id", n["id"]).execute()
             print("❌ Failed:", n["filename"], str(e))
 
+if __name__ == "__main__":
+    process_pending()
 if __name__ == "__main__":
     process_pending()
