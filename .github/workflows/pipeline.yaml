@@ -12,7 +12,7 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      TESSDATA_PREFIX: /usr/share/tesseract-ocr/4.00/tessdata
+      TESSDATA_PREFIX: /usr/share/tesseract-ocr/tessdata
 
     steps:
       - name: Checkout repo
@@ -28,7 +28,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             tesseract-ocr \
-            tesseract-ocr-all \
+            tesseract-ocr-eng \
             libtesseract-dev \
             poppler-utils \
             ghostscript \
@@ -36,6 +36,8 @@ jobs:
           echo "Verifying tesseract installation..."
           tesseract --version
           which tesseract
+          ls -l /usr/share/tesseract-ocr/tessdata/eng.traineddata
+          echo "TESSDATA_PREFIX=$TESSDATA_PREFIX"
 
       - name: Install Python dependencies
         run: |
