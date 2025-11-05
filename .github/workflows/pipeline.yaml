@@ -12,7 +12,7 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      TESSDATA_PREFIX: /usr/share/tesseract-ocr/4.00/tessdata
+      TESSDATA_PREFIX: /usr/share/tesseract-ocr/5.0/tessdata
 
     steps:
       - name: Checkout repo
@@ -34,23 +34,20 @@ jobs:
             ghostscript \
             build-essential
           
-          # Create tessdata directory if it doesn't exist
-          sudo mkdir -p /usr/share/tesseract-ocr/4.00/tessdata
-          
-          # Copy language data to correct location
-          sudo cp /usr/share/tesseract-ocr/tessdata/eng.traineddata /usr/share/tesseract-ocr/4.00/tessdata/
+          # Download latest eng.traineddata directly
+          sudo mkdir -p /usr/share/tesseract-ocr/5.0/tessdata
+          sudo wget -O /usr/share/tesseract-ocr/5.0/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
           
           # Verify setup
           echo "Verifying tesseract installation..."
           tesseract --version
           which tesseract
-          ls -la /usr/share/tesseract-ocr/4.00/tessdata/
+          ls -la /usr/share/tesseract-ocr/5.0/tessdata/
           echo "TESSDATA_PREFIX=$TESSDATA_PREFIX"
           
           # Test tesseract
-          echo "Testing tesseract..."
           echo "Hello World" > test.txt
-          tesseract test.txt stdout
+          TESSDATA_PREFIX=/usr/share/tesseract-ocr/5.0/tessdata tesseract test.txt stdout
 
       - name: Install Python dependencies
         run: |
@@ -67,6 +64,6 @@ jobs:
 
       - name: Run worker to process new notices
         env:
-          TESSDATA_PREFIX: /usr/share/tesseract-ocr/4.00/tessdata
+          TESSDATA_PREFIX: /usr/share/tesseract-ocr/5.0/tessdata
         run: |
           python -u worker/worker.py
