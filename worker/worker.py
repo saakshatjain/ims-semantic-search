@@ -43,12 +43,40 @@ def extract_text_and_tables(pdf_bytes: bytes):
 
     # --- OCR fallback if no embedded text ---
     if not text_content:
+        ocr_text = ""
+        # Try textract with pdfminer
         try:
             ocr_text = textract.process(pdf_path, method='pdfminer').decode('utf-8')
-            if ocr_text.strip():
-                text_content.append(ocr_text)
+            print("Textract (pdfminer) output:", repr(ocr_text[:200]))
         except Exception as e:
-            print("⚠️ OCR failed:", e)
+            print("⚠️ Textract pdfminer failed:", e)
+        # If still empty, try textract default
+        if not ocr_text.strip():
+            try:
+                ocr_text = textract.process(pdf_path).decode('utf-8')
+                print("Textract (default) output:", repr(ocr_text[:200]))
+            except Exception as e:
+                print("⚠️ Textract default failed:", e)
+        # If still empty, fallback to image-based OCR
+        if not ocr_text.strip():
+            try:
+                import fitz
+                from PIL import Image
+                doc = fitz.open(pdf_path)
+                for page in doc:
+                    pix = page.get_pixmap(dpi=300)
+                    img = Image.open(io.BytesIO(pix.tobytes("png")))
+                    # Try textract on image
+                    img.save("temp_page.png")
+                    img_text = textract.process("temp_page.png", method='tesseract').decode('utf-8')
+                    print("Textract (image/tesseract) output:", repr(img_text[:200]))
+                    if img_text.strip():
+                        text_content.append(img_text)
+                    os.remove("temp_page.png")
+            except Exception as e:
+                print("⚠️ Textract image OCR failed:", e)
+        else:
+            text_content.append(ocr_text)
 
     # --- Extract tables ---
     try:
