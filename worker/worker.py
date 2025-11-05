@@ -1,10 +1,42 @@
-import os, io, tempfile, json
-from datetime import datetime
-import fitz  # PyMuPDF
+import os
+import sys
+from paddleocr import PaddleOCR
 import pdfplumber
 import textract
-from supabase import create_client, Client
-from sentence_transformers import SentenceTransformer
+from PIL import Image
+
+# Remove utils import, merge relevant functions here
+
+def extract_text_from_pdf(pdf_path):
+    text = ""
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text
+        if not text.strip():
+            # If no text found, try OCR
+            text = extract_text_from_pdf_with_ocr(pdf_path)
+    except Exception as e:
+        text = extract_text_from_pdf_with_ocr(pdf_path)
+    return text
+
+def extract_text_from_pdf_with_ocr(pdf_path):
+    ocr = PaddleOCR(use_angle_cls=True, lang='en')
+    images = pdf_to_images(pdf_path)
+    text = ""
+    for img in images:
+        result = ocr.ocr(img, cls=True)
+        for line in result:
+            for word_info in line:
+                text += word_info[1][0] + " "
+    return text
+
+def pdf_to_images(pdf_path):
+    from pdf2image import convert_from_path
+    images = convert_from_path(pdf_path)
+    return images
 
 # --- Setup Supabase ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -33,11 +65,9 @@ def extract_text_and_tables(pdf_bytes: bytes):
         pdf_path = tmp.name
 
     # --- Extract embedded text ---
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            txt = page.extract_text()
-            if txt:
-                text_content.append(txt)
+    text = extract_text_from_pdf(pdf_path)
+    if text:
+        text_content.append(text)
 
     # --- OCR fallback if no embedded text ---
     if not text_content:
