@@ -9,5 +9,5 @@ camelot-py[cv]
 Pillow
 sentence-transformers
 numpy
-textract
+textract==1.6.3
 
