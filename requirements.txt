@@ -2,7 +2,7 @@ requests
 beautifulsoup4
 pandas
 python-dotenv
-supabase-py
+supabase
 PyMuPDF
 pdfplumber
 Pillow
