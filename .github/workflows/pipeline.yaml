@@ -2,7 +2,7 @@ name: Notices Pipeline
 
 on:
   schedule:
-    - cron: "30 3-11 * * *"   # every hour 9:30–17:30 IST
+    - cron: "30 3-11 * * *"
   workflow_dispatch:
 
 jobs:
@@ -44,19 +44,10 @@ jobs:
           pip install -r requirements.txt
 
       - name: Verify environment
-        run: |
-          python - <<EOF
-import paddleocr
-import fitz
-import pdfplumber
-import numpy
-print("✅ Environment OK")
-EOF
+        run: python -c "import paddleocr, fitz, pdfplumber, numpy; print('✅ Environment OK')"
 
       - name: Run scraper
-        run: |
-          python -u scraper.py
+        run: python -u scraper.py
 
       - name: Run worker
-        run: |
-          python -u worker/worker.py
+        run: python -u worker/worker.py
