@@ -42,9 +42,18 @@ class RetrieveRequest(BaseModel):
     prefetch_k: int = 30
 
 # -------------- Helpers --------------
-def embed_minilm(text: str) -> List[float]:
-    """Generate 384-dim MiniLM embeddings for compatibility with Supabase."""
-    return embed_model.encode([text], convert_to_numpy=True)[0].tolist()
+# ...
+from fastembed import TextEmbedding
+
+# Load MiniLM 384-d via ONNX (no torch)
+# FastEmbed supports all-MiniLM-L6-v2 (384 dims).
+embedder = TextEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+def embed_minilm(text: str):
+    # returns a generator; take first vector
+    vec = next(embedder.embed([text]))
+    return vec.tolist()
+
 
 def supabase_vector_search(query_vec: List[float], k: int):
     """Call your RPC to fetch similar notice chunks."""

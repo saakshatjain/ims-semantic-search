@@ -4,5 +4,5 @@ supabase
 python-dotenv
 requests
 cohere
-sentence-transformers==2.2.2
-torch==2.0.1+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html
+fastembed
+onnxruntime
