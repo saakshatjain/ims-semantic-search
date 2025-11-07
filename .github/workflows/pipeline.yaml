@@ -2,7 +2,7 @@ name: Notices Pipeline
 
 on:
   schedule:
-    - cron: "30 3-11 * * *"
+    - cron: "30 3-11 * * *"   # every hour 9:30–17:30 IST
   workflow_dispatch:
 
 jobs:
@@ -34,7 +34,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            poppler-utils libgl1 libglib2.0-0
+            poppler-utils \
+            libgl1 \
+            libglib2.0-0
 
       - name: Install Python deps
         run: |
@@ -43,13 +45,12 @@ jobs:
 
       - name: Verify environment
         run: |
-          python - <<EOF
-import easyocr, fitz, pdfplumber, numpy
-print("✅ Environment OK")
-EOF
+          python -c "import easyocr, fitz, pdfplumber, numpy; print('✅ Environment OK')"
 
       - name: Run scraper
-        run: python -u scraper.py
+        run: |
+          python -u scraper.py
 
       - name: Run worker
-        run: python -u worker/worker.py
+        run: |
+          python -u worker/worker.py
