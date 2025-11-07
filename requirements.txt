@@ -1,14 +1,12 @@
 requests
 beautifulsoup4
 pandas
-supabase
-dotenv
-pymupdf
+python-dotenv
+supabase-py
+PyMuPDF
 pdfplumber
-# PyPDF2<3.0.0      # Remove if only used for camelot
-# camelot-py[cv]==0.10.1  # Remove this line
 Pillow
 sentence-transformers
 numpy
-textract==1.6.3
-
+pdf2image
+paddleocr

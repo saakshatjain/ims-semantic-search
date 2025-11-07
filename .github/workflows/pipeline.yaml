@@ -2,51 +2,83 @@ name: Notices Pipeline
 
 on:
   schedule:
-    # Runs every hour between 09:00 - 17:00 IST (UTC 03:00 - 11:00)
+    # Runs every hour from 09:30–17:30 IST (UTC 03:00–11:00)
     - cron: "30 3-11 * * *"
   workflow_dispatch:
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
 
     steps:
+      # -----------------------
+      # 1. Checkout repository
+      # -----------------------
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # -----------------------
+      # 2. Setup Python
+      # -----------------------
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
-      - name: Install apt packages (pdf rendering)
+      # -----------------------
+      # 3. Enable pip cache
+      # -----------------------
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # -----------------------------------
+      # 4. Install system-level OCR deps
+      # -----------------------------------
+      - name: Install system packages (for PDF + OCR)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            poppler-utils libgl1-mesa-glx libglib2.0-0
+            poppler-utils \
+            libgl1 \
+            libglib2.0-0
 
-      - name: Install Python deps (including PaddleOCR)
+      # -----------------------------------
+      # 5. Install Python dependencies
+      # -----------------------------------
+      - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          # Try CPU paddlepaddle wheel first (if available). If fails, fallback to pip installing paddleocr which prints wheel hint.
-          pip install paddleocr sentence-transformers pymupdf pdfplumber pillow supabase python-dotenv numpy
-          # If you prefer explicit paddlepaddle CPU wheel, uncomment and adjust URL for the Runner arch:
-          # pip install paddlepaddle==2.5.2 -f https://www.paddlepaddle.org.cn/whl/mkl/avx/stable.html || true
-          # optional: camelot for table detection (requires ghostscript on runner)
-          # sudo apt-get install -y ghostscript
-          # pip install "camelot-py[cv]"
+          pip install -r requirements.txt
 
-      - name: Verify Python env
+      # -----------------------------------
+      # 6. Verify environment
+      # -----------------------------------
+      - name: Verify environment
         run: |
-          python -c "import paddleocr, sentence_transformers, fitz, pdfplumber; print('OK')"
+          python - <<'EOF'
+import paddleocr, fitz, pdfplumber, numpy
+print("✅ Environment OK")
+EOF
 
-      - name: Run scraper (adds new notices)
+      # -----------------------------------
+      # 7. Run scraper to add new notices
+      # -----------------------------------
+      - name: Run scraper
         run: |
           python -u scraper.py
 
-      - name: Run worker to process new notices
+      # -----------------------------------
+      # 8. Run worker to process notices
+      # -----------------------------------
+      - name: Run worker
         run: |
           python -u worker/worker.py
