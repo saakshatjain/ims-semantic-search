@@ -249,7 +249,8 @@ def create_chunk_embeddings_and_store(notice_id: str, filename: str, text: str, 
         batch = rows[s:eend]
         # Use upsert if available — if not, fallback to insert
         try:
-            supabase.table("notice_chunks").upsert(batch, on_conflict="id").execute()
+            supabase.table("notice_chunks").upsert(rows[start:start+INSERT_BATCH],on_conflict="notice_id,chunk_idx").execute()
+
         except Exception:
             for r in batch:
                 try:
@@ -259,7 +260,7 @@ def create_chunk_embeddings_and_store(notice_id: str, filename: str, text: str, 
     return total
 
 # ---------------- main worker ----------------
-def process_pending(limit:int=100):
+def process_pending(limit:int=15):
     print("Fetching pending notices...")
     res = supabase.table("notices").select("*").eq("status", "pending").limit(limit).execute()
     notices = res.data or []
@@ -317,4 +318,4 @@ def rechunk_all_processed(batch_size:int=50):
         offset += batch_size
 
 if __name__ == "__main__":
-    process_pending(limit=100)
+    process_pending(limit=15)
