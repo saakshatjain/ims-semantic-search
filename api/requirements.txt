@@ -1,10 +1,6 @@
 fastapi
 uvicorn[standard]
-requests
-python-dotenv
 supabase
-sentence-transformers
+python-dotenv
+requests
 numpy
-transformers
-torch
-httpx
