@@ -1,81 +1,106 @@
-# api_server.py
-
 import os
-from fastapi import FastAPI
+import json
+from typing import List, Dict, Any
+
+import cohere
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
-from dotenv import load_dotenv
-
 from supabase import create_client
-from sentence_transformers import SentenceTransformer, CrossEncoder
-
-
+from dotenv import load_dotenv
+from sentence_transformers import SentenceTransformer
 
 load_dotenv()
 
-app = FastAPI()
-
-# ---- Supabase ----
+# ---------------- Env ----------------
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+COHERE_API_KEY = os.getenv("COHERE_API_KEY")
+API_SECRET = os.getenv("API_SECRET")
+COHERE_RERANK_MODEL = os.getenv("COHERE_RERANK_MODEL", "rerank-english-v3.0")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("Missing SUPABASE_URL or SUPABASE_KEY")
+if not COHERE_API_KEY:
+    raise RuntimeError("Missing COHERE_API_KEY")
+if not API_SECRET:
+    raise RuntimeError("Missing API_SECRET")
+
+# ------------- Clients ---------------
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+co = cohere.Client(COHERE_API_KEY)
 
-# ---- Embedding + Reranker ----
-embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+# ✅ LOAD MiniLM EMBEDDING MODEL (384-d)
+embed_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# ---- Request Schema ----
-class QueryRequest(BaseModel):
+# -------------- FastAPI --------------
+app = FastAPI(title="NSUT RAG Retrieval API")
+
+# -------------- Schemas --------------
+class RetrieveRequest(BaseModel):
     query: str
-    top_k: int = 10
+    top_k: int = 5
+    prefetch_k: int = 30
 
+# -------------- Helpers --------------
+def embed_minilm(text: str) -> List[float]:
+    """Generate 384-dim MiniLM embeddings for compatibility with Supabase."""
+    return embed_model.encode([text], convert_to_numpy=True)[0].tolist()
 
-# ---- Step 1: Fetch approximate chunks using Supabase RPC ----
-def fetch_top_chunks(query_embedding, top_k=10):
-    response = supabase.rpc(
+def supabase_vector_search(query_vec: List[float], k: int):
+    """Call your RPC to fetch similar notice chunks."""
+    res = supabase.rpc(
         "match_notice_chunks",
-        {"query_embedding": query_embedding, "match_count": top_k}
+        {
+            "query_embedding": query_vec,   # your RPC must accept vector[]
+            "match_count": k
+        }
     ).execute()
+    return res.data or []
 
-    return response.data or []
+def rerank_with_cohere(query: str, docs: List[str], top_n: int):
+    rr = co.rerank(
+        model=COHERE_RERANK_MODEL,
+        query=query,
+        documents=docs,
+        top_n=min(top_n, len(docs))
+    )
+    return [r.index for r in rr.results]
 
+# -------------- Routes --------------
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
-# ---- Step 2: Rerank using CrossEncoder ----
-def rerank_chunks(query, chunks):
-    if not chunks:
-        return []
-
-    pairs = [[query, c["chunk_text"]] for c in chunks]
-    scores = reranker.predict(pairs)
-
-    # attach scores
-    for c, score in zip(chunks, scores):
-        c["rerank_score"] = float(score)
-
-    # sort best → worst
-    return sorted(chunks, key=lambda c: c["rerank_score"], reverse=True)
-
-
-# ---- API ROUTE: return only context ----
 @app.post("/retrieve")
-def retrieve(req: QueryRequest):
-    # 1) Embed the query
-    q_emb = embedder.encode(req.query, convert_to_numpy=True).tolist()
+def retrieve(req: RetrieveRequest, api_key: str = Header(None)):
+    if api_key != API_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
-    # 2) Fetch approximate chunks (fast)
-    candidates = fetch_top_chunks(q_emb, req.top_k)
+    # 1) embed query with MiniLM (384-dim)
+    q_vec = embed_minilm(req.query)
 
-    # 3) Rerank them (accuracy boost)
-    best = rerank_chunks(req.query, candidates)
+    # 2) fetch top-N candidates via pgvector
+    candidates = supabase_vector_search(q_vec, req.prefetch_k)
+    if not candidates:
+        return {"query": req.query, "chunks": []}
 
-    # 4) Return ONLY the chunk text + metadata
+    docs = [c["chunk_text"] for c in candidates]
+
+    # 3) rerank using Cohere
+    ordered = rerank_with_cohere(req.query, docs, req.top_k)
+
+    # 4) return reranked top_k chunks
+    final = []
+    for idx in ordered:
+        c = candidates[idx]
+        final.append({
+            "chunk_text": c["chunk_text"],
+            "notice_id": c.get("notice_id"),
+            "filename": c.get("filename"),
+            "similarity": c.get("similarity"),
+        })
+
     return {
-        "context": [
-            {
-                "chunk_text": c["chunk_text"],
-                "notice_id": c["notice_id"],
-                "filename": c["filename"],
-                "rerank_score": c["rerank_score"]
-            }
-            for c in best[:5]
-        ]
+        "query": req.query,
+        "chunks": final
     }
