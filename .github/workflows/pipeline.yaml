@@ -22,32 +22,20 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install PDF and document dependencies
+      - name: Install apt packages (Tesseract + PDF deps)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            poppler-utils \
-            ghostscript \
-            build-essential \
-            python3-dev \
-            libxml2-dev \
-            libxslt1-dev \
-            antiword \
-            unrtf \
-            tesseract-ocr
-
-      - name: Install PaddleOCR dependencies
-        run: |
-          python -m pip install paddlepaddle==2.5.0 --find-links https://paddlepaddle.org.cn/whl/linux/mkl
-          python -m pip install paddleocr
+            tesseract-ocr libtesseract-dev poppler-utils ghostscript \
+            build-essential
 
       - name: Install Python dependencies
         run: |
-          python -m pip install --upgrade "pip<24.1"
+          python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            pip install supabase-py sentence-transformers numpy textract pillow pdfplumber camelot-py[cv]
+            pip install supabase-py sentence-transformers numpy pytesseract pillow pdfplumber camelot-py[cv]
           fi
 
       - name: Run scraper (adds new notices)
