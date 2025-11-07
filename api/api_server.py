@@ -7,7 +7,7 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from supabase import create_client
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
+
 
 load_dotenv()
 
@@ -29,8 +29,6 @@ if not API_SECRET:
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 co = cohere.Client(COHERE_API_KEY)
 
-# ✅ LOAD MiniLM EMBEDDING MODEL (384-d)
-embed_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 # -------------- FastAPI --------------
 app = FastAPI(title="NSUT RAG Retrieval API")
