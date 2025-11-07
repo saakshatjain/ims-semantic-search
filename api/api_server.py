@@ -6,8 +6,9 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from supabase import create_client
-from sentence_transformers import SentenceTransformer
-from transformers import CrossEncoder
+from sentence_transformers import SentenceTransformer, CrossEncoder
+
+
 
 load_dotenv()
 
