@@ -9,4 +9,4 @@ Pillow
 sentence-transformers
 numpy
 pdf2image
-paddleocr
+easyocr
