@@ -317,4 +317,4 @@ def rechunk_all_processed(batch_size:int=50):
         offset += batch_size
 
 if __name__ == "__main__":
-    process_pending(limit=8)
+    process_pending(limit=100)
