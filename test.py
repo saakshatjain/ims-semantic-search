@@ -9,7 +9,7 @@ API_SECRET = os.getenv("API_SECRET")
 resp = requests.post(
     API_URL,
     headers={"api-key": API_SECRET},
-    json={"query": "innovision?", "prefetch_k": 1}
+    json={"query": "responsible ai?", "prefetch_k": 50}
 )
 
 print(resp.json())
