@@ -64,19 +64,26 @@ def rerank_with_cohere(query: str, docs: List[str], top_n: int) -> List[int]:
 def get_notice_link(notice_id: str, filename: str) -> str:
     """
     Generates a signed URL with download prompt for a notice stored in Supabase Storage.
+    Will append `download` parameter manually.
     """
     bucket = "notices"
     folder = "notices"
     file_path = f"{folder}/{filename}" if filename else f"{folder}/{notice_id}.pdf"
 
-    # Expire in 1 hour (3600 seconds), with a download prompt
     try:
+        # Generate standard signed URL
         signed_url_res = supabase.storage.from_(bucket).create_signed_url(
             path=file_path,
-            expires_in=3600,
-            parameters={"download": filename or f"{notice_id}.pdf"}
+            expires_in=3600
         )
-        return signed_url_res.get("signedURL") or None
+        url = signed_url_res.get("signedURL")
+        if not url:
+            return None
+
+        # Append the download parameter manually
+        download_name = filename or f"{notice_id}.pdf"
+        return f"{url}&download={download_name}"
+
     except Exception as e:
         print(f"Error creating signed URL for {file_path}: {e}")
         return None
