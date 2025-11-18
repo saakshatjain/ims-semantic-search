@@ -154,9 +154,10 @@ def retrieve(req: RetrieveRequest, api_key: str = Header(None)):
 
         notice_ocr = None
         if notice_id and str(notice_id) not in notices_attached:
-            notice_ocr = notice_ocr_map.get(str(notice_id))
+            full_ocr = notice_ocr_map.get(str(notice_id))
+            notice_ocr = full_ocr[:2000]
             notices_attached.add(str(notice_id))
-
+       
         final.append({
             "chunk_text": c.get("chunk_text"),
             "notice_link": notice_link,
