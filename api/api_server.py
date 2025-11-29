@@ -36,8 +36,8 @@ app = FastAPI(title="NSUT RAG Retrieval API")
 
 class RetrieveRequest(BaseModel):
     query: str
-    top_k: int = 10
-    prefetch_k: int = 50
+    top_k: int = 10          # how many chunks to return after reranking
+    prefetch_k: int = 50     # how many candidates to fetch from Supabase before rerank
 
 # -------------- Helpers --------------
 
@@ -45,7 +45,11 @@ def embed_minilm(text: str) -> List[float]:
     return next(embedder.embed([text])).tolist()
 
 def supabase_vector_search(query_vec: List[float], k: int) -> List[Dict[str, Any]]:
-    """Call your RPC to fetch similar notice chunks."""
+    """
+    Call your RPC to fetch similar notice chunks.
+    RPC: match_notice_chunks(query_embedding vector, match_count int)
+    Must return: id, notice_id, chunk_idx, chunk_text, filename, uploaded_at, similarity
+    """
     res = supabase.rpc(
         "match_notice_chunks",
         {"query_embedding": query_vec, "match_count": k}
@@ -53,11 +57,17 @@ def supabase_vector_search(query_vec: List[float], k: int) -> List[Dict[str, Any
     return res.data or []
 
 def rerank_with_cohere(query: str, docs: List[str], top_n: int) -> List[int]:
+    """
+    Rerank candidates using Cohere on SHORT docs (chunk text only).
+    Returns a list of indices into `docs`, sorted by relevance.
+    """
+    if not docs:
+        return []
     rr = co.rerank(
         model=COHERE_RERANK_MODEL,
         query=query,
         documents=docs,
-        top_n=min(top_n, len(docs))
+        top_n=min(top_n, len(docs)),
     )
     return [r.index for r in rr.results]
 
@@ -71,16 +81,14 @@ def get_notice_link(notice_id: str, filename: str) -> str:
     file_path = f"{folder}/{filename}" if filename else f"{folder}/{notice_id}.pdf"
 
     try:
-        # Generate standard signed URL
         signed_url_res = supabase.storage.from_(bucket).create_signed_url(
             path=file_path,
-            expires_in=3600
+            expires_in=3600,
         )
         url = signed_url_res.get("signedURL")
         if not url:
             return None
 
-        # Append the download parameter manually
         download_name = filename or f"{notice_id}.pdf"
         return f"{url}&download={download_name}"
 
@@ -91,13 +99,25 @@ def get_notice_link(notice_id: str, filename: str) -> str:
 def fetch_notices_ocr(notice_ids: List[Any]) -> Dict[str, str]:
     """
     Fetch full ocr_text for given notice_ids from the 'notices' table.
-    Returns a map: str(notice_id) -> ocr_text
+    Returns a map: str(notice_id) -> full ocr_text
     """
     if not notice_ids:
         return {}
     res = supabase.table("notices").select("id, ocr_text").in_("id", notice_ids).execute()
     rows = res.data or []
     return {str(r["id"]): (r.get("ocr_text") or "") for r in rows}
+
+def short_doc(c: Dict[str, Any]) -> str:
+    """
+    Build a compact text for reranking:
+    - use only the chunk_text (trimmed)
+    - add some lightweight metadata
+    - DO NOT include full OCR or tables here
+    """
+    chunk_text = (c.get("chunk_text") or "")[:300]  # first 300 chars are enough
+    filename = c.get("filename", "unknown")
+    notice_id = c.get("notice_id", "unknown")
+    return f"[file={filename}] [notice_id={notice_id}] :: {chunk_text}"
 
 # -------------- Routes --------------
 
@@ -113,20 +133,13 @@ def retrieve(req: RetrieveRequest, api_key: str = Header(None)):
     # 1) Embed the query
     q_vec = embed_minilm(req.query)
 
-    # 2) Retrieve top-N candidate chunks (each chunk includes notice_id, chunk_text, filename, similarity, etc.)
+    # 2) Retrieve top-N candidate chunks from Supabase
     candidates = supabase_vector_search(q_vec, req.prefetch_k)
     if not candidates:
         return {"query": req.query, "chunks": []}
 
-    # 3) Create extended docs for reranking
-    docs = [
-        "\n".join([
-            c.get("chunk_text", ""),
-            f"Full Notice Text (snippet): {c.get('ocr_text', '')}",
-            f"Tables: {c.get('ocr_tables', '')}"
-        ])
-        for c in candidates
-    ]
+    # 3) Build compact docs for reranking
+    docs = [short_doc(c) for c in candidates]
 
     # 4) Rerank using Cohere to get best indices
     ordered_indices = rerank_with_cohere(req.query, docs, req.top_k)
@@ -150,21 +163,21 @@ def retrieve(req: RetrieveRequest, api_key: str = Header(None)):
         c = candidates[idx]
         notice_id = c.get("notice_id")
         filename = c.get("filename")
-        notice_link = get_notice_link(notice_id, filename) if notice_id or filename else None
+        notice_link = get_notice_link(notice_id, filename) if (notice_id or filename) else None
 
         notice_ocr = None
         if notice_id and str(notice_id) not in notices_attached:
             full_ocr = notice_ocr_map.get(str(notice_id)) or ""
             notice_ocr = full_ocr if full_ocr else None
-
             notices_attached.add(str(notice_id))
-       
+
         final.append({
             "chunk_text": c.get("chunk_text"),
             "notice_link": notice_link,
             "filename": filename,
-            "similarity": c.get("similarity"),
-            "notice_ocr": notice_ocr,
+            "similarity": c.get("similarity"),   # similarity from RPC
+            "notice_ocr": notice_ocr,            # full OCR, first chunk per notice
+            "notice_id": notice_id,
         })
 
     return {"query": req.query, "chunks": final}
