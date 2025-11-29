@@ -36,7 +36,7 @@ app = FastAPI(title="NSUT RAG Retrieval API")
 
 class RetrieveRequest(BaseModel):
     query: str
-    top_k: int = 5
+    top_k: int = 10
     prefetch_k: int = 50
 
 # -------------- Helpers --------------

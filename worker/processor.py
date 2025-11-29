@@ -47,7 +47,7 @@ def cosine_sim(a: np.ndarray, b: np.ndarray):
     return float(np.dot(a_norm, b_norm))
 
 # New helper: MMR selection to pick non-redundant important sentences
-def mmr_select(sentence_embs: np.ndarray, doc_emb: np.ndarray, top_k: int = 5, diversity: float = 0.7):
+def mmr_select(sentence_embs: np.ndarray, doc_emb: np.ndarray, top_k: int = 10, diversity: float = 0.7):
     # sentence_embs: (n_sentences, dim)
     n = sentence_embs.shape[0]
     if n == 0:
@@ -228,7 +228,7 @@ def process_pending_notices():
                 sent_embs = np.zeros((0, doc_emb.shape[0]), dtype=np.float32)
 
             # Step 4: Select important sentences via MMR
-            top_k = min(6, max(1, len(sentences)))
+            top_k = min(10, max(1, len(sentences)))
             selected_indices = mmr_select(sent_embs, doc_emb, top_k=top_k, diversity=0.7) if len(sentences) > 0 else []
 
             # Compose important_text
