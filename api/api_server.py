@@ -155,7 +155,7 @@ def retrieve(req: RetrieveRequest, api_key: str = Header(None)):
         notice_ocr = None
         if notice_id and str(notice_id) not in notices_attached:
             full_ocr = notice_ocr_map.get(str(notice_id)) or ""
-            notice_ocr = full_ocr[:2000] if full_ocr else None
+            notice_ocr = full_ocr if full_ocr else None
 
             notices_attached.add(str(notice_id))
        
