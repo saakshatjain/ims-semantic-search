@@ -48,7 +48,8 @@ def supabase_vector_search(query_vec: List[float], k: int) -> List[Dict[str, Any
     """
     Call your RPC to fetch similar notice chunks.
     RPC: match_notice_chunks(query_embedding vector, match_count int)
-    Must return: id, notice_id, chunk_idx, chunk_text, filename, uploaded_at, similarity
+    Must return at least:
+      id, notice_id, chunk_idx, chunk_text, filename, uploaded_at, similarity, notice_title
     """
     res = supabase.rpc(
         "match_notice_chunks",
@@ -58,7 +59,7 @@ def supabase_vector_search(query_vec: List[float], k: int) -> List[Dict[str, Any
 
 def rerank_with_cohere(query: str, docs: List[str], top_n: int) -> List[int]:
     """
-    Rerank candidates using Cohere on SHORT docs (chunk text only).
+    Rerank candidates using Cohere on SHORT docs.
     Returns a list of indices into `docs`, sorted by relevance.
     """
     if not docs:
@@ -110,14 +111,18 @@ def fetch_notices_ocr(notice_ids: List[Any]) -> Dict[str, str]:
 def short_doc(c: Dict[str, Any]) -> str:
     """
     Build a compact text for reranking:
-    - use only the chunk_text (trimmed)
-    - add some lightweight metadata
-    - DO NOT include full OCR or tables here
+    - use notice_title + a trimmed version of chunk_text
+    - add a bit of lightweight metadata if needed
     """
     chunk_text = (c.get("chunk_text") or "")[:300]  # first 300 chars are enough
+    notice_title = c.get("notice_title") or ""
     filename = c.get("filename", "unknown")
-    notice_id = c.get("notice_id", "unknown")
-    return f"[file={filename}] [notice_id={notice_id}] :: {chunk_text}"
+
+    # Prefer title + snippet so Cohere sees course code / exam type clearly
+    if notice_title:
+        return f"{notice_title} :: {chunk_text}"
+    else:
+        return f"[file={filename}] :: {chunk_text}"
 
 # -------------- Routes --------------
 
@@ -138,7 +143,7 @@ def retrieve(req: RetrieveRequest, api_key: str = Header(None)):
     if not candidates:
         return {"query": req.query, "chunks": []}
 
-    # 3) Build compact docs for reranking
+    # 3) Build compact docs for reranking (now includes notice_title when available)
     docs = [short_doc(c) for c in candidates]
 
     # 4) Rerank using Cohere to get best indices
@@ -163,6 +168,7 @@ def retrieve(req: RetrieveRequest, api_key: str = Header(None)):
         c = candidates[idx]
         notice_id = c.get("notice_id")
         filename = c.get("filename")
+        notice_title = c.get("notice_title")  # from chunks RPC
         notice_link = get_notice_link(notice_id, filename) if (notice_id or filename) else None
 
         notice_ocr = None
@@ -178,6 +184,7 @@ def retrieve(req: RetrieveRequest, api_key: str = Header(None)):
             "similarity": c.get("similarity"),   # similarity from RPC
             "notice_ocr": notice_ocr,            # full OCR, first chunk per notice
             "notice_id": notice_id,
+            "notice_title": notice_title,        # expose for frontend / LLM
         })
 
     return {"query": req.query, "chunks": final}

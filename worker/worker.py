@@ -232,6 +232,7 @@ def create_chunk_embeddings_and_store(
     """
     Chunk text, create embeddings, and store in notice_chunks.
     Each chunk carries notice_title for easier display in RAG.
+    Embeddings are computed on: "<notice_title>. <chunk_text>" when title is present.
     """
     chunks = chunk_text_semantic(text)
     if not chunks:
@@ -244,7 +245,7 @@ def create_chunk_embeddings_and_store(
             "id": str(uuid.uuid4()),
             "notice_id": notice_id,
             "chunk_idx": idx,
-            "chunk_text": c,
+            "chunk_text": c,          # raw chunk text
             "filename": filename,
             "notice_title": notice_title,
             "uploaded_at": uploaded_at,
@@ -253,17 +254,24 @@ def create_chunk_embeddings_and_store(
         })
 
     total = len(rows)
-    # batch embed
+    # batch embed (with title prefix when available)
     for s in range(0, total, EMBED_BATCH):
         eend = min(total, s + EMBED_BATCH)
-        texts = [r["chunk_text"] for r in rows[s:eend]]
+
+        texts = []
+        for r in rows[s:eend]:
+            if r["notice_title"]:
+                texts.append(f"{r['notice_title']}. {r['chunk_text']}")
+            else:
+                texts.append(r["chunk_text"])
+
         vecs = embed_model.encode(texts, convert_to_numpy=True).tolist()
         for offset, v in enumerate(vecs):
             idx = s + offset
             rows[idx]["embedding"] = v
             rows[idx]["processed_at"] = datetime.utcnow().isoformat()
 
-    # upsert in batches (fixed bug: use `s` instead of undefined `start`)
+    # upsert in batches
     for s in range(0, total, INSERT_BATCH):
         eend = min(total, s + INSERT_BATCH)
         batch = rows[s:eend]
@@ -279,6 +287,7 @@ def create_chunk_embeddings_and_store(
                 except Exception as e:
                     print("chunk insert failed", r["id"], str(e))
     return total
+
 
 # ---------------- main worker ----------------
 def process_pending(limit: int = 15):

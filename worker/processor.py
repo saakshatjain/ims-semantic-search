@@ -225,7 +225,10 @@ def process_pending_notices():
             sentence_ranges = sentence_char_ranges(cleaned, sentences)
 
             # Step 3: Compute embeddings (document + sentences)
-            doc_emb = model.encode(cleaned).astype(np.float32)
+            # IMPORTANT: include notice_title in doc embedding input
+            doc_input = f"{notice_title}. {cleaned}" if notice_title else cleaned
+            doc_emb = model.encode(doc_input).astype(np.float32)
+
             if sentences:
                 sent_embs = model.encode(sentences)
                 sent_embs = np.asarray(sent_embs, dtype=np.float32)
@@ -234,7 +237,9 @@ def process_pending_notices():
 
             # Step 4: Select important sentences via MMR
             top_k = min(10, max(1, len(sentences)))
-            selected_indices = mmr_select(sent_embs, doc_emb, top_k=top_k, diversity=0.7) if len(sentences) > 0 else []
+            selected_indices = mmr_select(
+                sent_embs, doc_emb, top_k=top_k, diversity=0.7
+            ) if len(sentences) > 0 else []
 
             # Compose important_text
             selected_indices_sorted = sorted(selected_indices)
@@ -300,7 +305,11 @@ def process_pending_notices():
                 chunk_text = chunk['text']
                 if not chunk_text:
                     continue
-                chunk_emb = model.encode(chunk_text).astype(np.float32).tolist()
+
+                # IMPORTANT: include notice_title in chunk embedding input
+                embed_input = f"{notice_title}. {chunk_text}" if notice_title else chunk_text
+                chunk_emb = model.encode(embed_input).astype(np.float32).tolist()
+
                 row = {
                     "notice_id": notice_id,
                     "chunk_index": idx,
