@@ -114,7 +114,7 @@ def run_scraper():
     links=links[:200]        
     new_inserted = False
 
-    for i, (url, anchor_text) in enumerate(links, 1):
+    for i, url in enumerate(links, 1):
         url = url.replace("/view", "/edit")
         notice_title = clean_notice_title(anchor_text)
         print(f"\n[{i}] Processing: {url}")
