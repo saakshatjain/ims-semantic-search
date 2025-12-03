@@ -13,7 +13,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- HELPERS ---
 def notice_exists(notice_id: str) -> bool:
-    res = supabase.table("notices").select("id").eq("id", notice_id).execute()
+    res = supabase.table("notices_new").select("id").eq("id", notice_id).execute()
     return len(res.data) > 0
 
 def clean_notice_title(anchor_text: str | None) -> str | None:
@@ -34,13 +34,13 @@ def save_to_supabase(file_bytes, url, notice_title: str | None):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     short_hash = notice_id[:8]
     filename = f"notice_{timestamp}_{short_hash}.pdf"
-    path_in_bucket = f"notices/{filename}"
+    path_in_bucket = f"notices_new/{filename}"
 
     # Upload to storage
-    supabase.storage.from_("notices").upload(path_in_bucket, file_bytes)
+    supabase.storage.from_("notices_new").upload(path_in_bucket, file_bytes)
 
     # Insert metadata in DB (only notice_title + existing fields)
-    supabase.table("notices").insert({
+    supabase.table("notices_new").insert({
         "id": notice_id,
         "url": url,
         "filename": filename,
@@ -85,27 +85,33 @@ def run_scraper():
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0"})
 
-    resp = session.get(NOTICES)
+    # 1) First: current notices (no POST body, or simple GET)
+    resp = session.get(NOTICES, timeout=60)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
+    raw_links = [a["href"] for a in soup.find_all("a", href=True)]
 
-    # Collect (url, anchor_text)
-    raw_items = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        text = a.get_text(strip=True) or None
-        url = href if href.startswith("http") else f"{BASE}/{href.lstrip('/')}"
-        raw_items.append((url, text))
-
-    # Deduplicate URLs but keep first anchor text
-    seen = set()
+    # 2) Second: ARCHIVE / LOAD MORE – replicate your curl POST
+    # This is the important part: it’s what your browser does when you click the archive/load-more control
+    archive_payload = {
+        "branch": "All",
+        "olddata": "Archive: Click to View Old Notices / Circulars",
+    }
+    resp_arch = session.post(
+        NOTICES,
+        data=archive_payload,
+        timeout=60,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    resp_arch.raise_for_status()
+    soup_arch = BeautifulSoup(resp_arch.text, "html.parser")
+    raw_links += [a["href"] for a in soup_arch.find_all("a", href=True)]
     links = []
-    for url, text in raw_items:
-        if url not in seen:
-            seen.add(url)
-            links.append((url, text))
-
-    links = links[:20]  # last / top 20 notices
+    for href in raw_links:
+        url = href if href.startswith("http") else f"{BASE}/{href}"
+        if url not in links:
+            links.append(url)
+    links=links[:200]        
     new_inserted = False
 
     for i, (url, anchor_text) in enumerate(links, 1):

@@ -203,7 +203,7 @@ def create_leftover_chunks(sentences, used_flags, sentence_ranges, min_chars=100
 
 def process_pending_notices():
     # fetch notices with OCR done but not embedded
-    response = supabase.table("notices") \
+    response = supabase.table("notices_new") \
         .select("id, ocr_text, notice_title") \
         .eq("status", "processing") \
         .is_("clean_text", "null") \
@@ -297,7 +297,7 @@ def process_pending_notices():
 
             # Step 6: Insert chunks (idempotent)
             try:
-                supabase.table("notice_chunks").delete().eq("notice_id", notice_id).execute()
+                supabase.table("notice_chunks_new").delete().eq("notice_id", notice_id).execute()
             except Exception:
                 pass
 
@@ -323,10 +323,10 @@ def process_pending_notices():
                     "notice_title": notice_title,
                     "created_at": datetime.datetime.utcnow().isoformat()
                 }
-                supabase.table("notice_chunks").insert(row).execute()
+                supabase.table("notice_chunks_new").insert(row).execute()
 
             # Step 7: Update notice row with summary & metadata
-            supabase.table("notices").update({
+            supabase.table("notices_new").update({
                 "clean_text": cleaned,
                 "embedding": doc_emb.tolist(),
                 "embedding_model": "all-MiniLM-L6-v2",
@@ -337,7 +337,7 @@ def process_pending_notices():
             }).eq("id", notice_id).execute()
 
         except Exception as e:
-            supabase.table("notices").update({
+            supabase.table("notices_new").update({
                 "status": "failed",
                 "error_msg": str(e)
             }).eq("id", notice_id).execute()
