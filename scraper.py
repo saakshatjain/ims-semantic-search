@@ -16,8 +16,15 @@ def notice_exists(notice_id: str) -> bool:
     res = supabase.table("notices").select("id").eq("id", notice_id).execute()
     return len(res.data) > 0
 
-def save_to_supabase(file_bytes, url):
-    """Insert new notice PDF into Supabase"""
+def clean_notice_title(anchor_text: str | None) -> str | None:
+    """Normalize whitespace etc. You can add more cleanup rules here if needed."""
+    if not anchor_text:
+        return None
+    title = re.sub(r"\s+", " ", anchor_text).strip()
+    return title
+
+def save_to_supabase(file_bytes, url, notice_title: str | None):
+    """Insert new notice PDF into Supabase with notice_title."""
     notice_id = hashlib.sha256(file_bytes).hexdigest()[:32]  # 32-char hash
 
     if notice_exists(notice_id):
@@ -32,16 +39,18 @@ def save_to_supabase(file_bytes, url):
     # Upload to storage
     supabase.storage.from_("notices").upload(path_in_bucket, file_bytes)
 
-    # Insert metadata in DB
+    # Insert metadata in DB (only notice_title + existing fields)
     supabase.table("notices").insert({
         "id": notice_id,
         "url": url,
         "filename": filename,
         "status": "pending",
-        "uploaded_at": datetime.now(timezone.utc).isoformat()
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "notice_title": notice_title,
     }).execute()
 
     print(f"✅ Stored in Supabase + table: {filename}")
+    print(f"   → notice_title: {notice_title}")
     return True
 
 def _get_drive_file_id(url: str):
@@ -53,7 +62,6 @@ def _get_drive_file_id(url: str):
         return m.group(1)
     return None
 
-
 def _get_confirm_token(resp):
     for k, v in resp.cookies.items():
         if k.startswith("download_warning"):
@@ -62,7 +70,6 @@ def _get_confirm_token(resp):
     if m:
         return m.group(1)
     return None
-
 
 def _download_drive_file(session, file_id: str) -> bytes:
     URL = "https://docs.google.com/uc?export=download"
@@ -81,20 +88,32 @@ def run_scraper():
     resp = session.get(NOTICES)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
-    raw_links = [a["href"] for a in soup.find_all("a", href=True)]
 
+    # Collect (url, anchor_text)
+    raw_items = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        text = a.get_text(strip=True) or None
+        url = href if href.startswith("http") else f"{BASE}/{href.lstrip('/')}"
+        raw_items.append((url, text))
+
+    # Deduplicate URLs but keep first anchor text
+    seen = set()
     links = []
-    for href in raw_links:
-        url = href if href.startswith("http") else f"{BASE}/{href}"
-        if url not in links:
-            links.append(url)
+    for url, text in raw_items:
+        if url not in seen:
+            seen.add(url)
+            links.append((url, text))
 
-    links = links[:10]  # last 10 notices
-    new_inserted = False  # flag to track new notices
+    links = links[:20]  # last / top 20 notices
+    new_inserted = False
 
-    for i, url in enumerate(links, 1):
+    for i, (url, anchor_text) in enumerate(links, 1):
         url = url.replace("/view", "/edit")
+        notice_title = clean_notice_title(anchor_text)
         print(f"\n[{i}] Processing: {url}")
+        print(f"   anchor: {anchor_text}")
+        print(f"   notice_title (cleaned): {notice_title}")
 
         try:
             # Google Sheets
@@ -103,20 +122,24 @@ def run_scraper():
                 gid_match = re.search(r"gid=(\d+)", url)
                 gid = gid_match.group(1) if gid_match else "0"
                 pdf_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=pdf&gid={gid}"
-                r = session.get(pdf_url)
+                r = session.get(pdf_url, timeout=60)
                 if r.headers.get("Content-Type", "").startswith("application/pdf"):
-                    if save_to_supabase(r.content, url):
+                    if save_to_supabase(r.content, url, notice_title):
                         new_inserted = True
+                else:
+                    print("⚠️ Google Sheets export didn't return PDF:", url)
                 continue
 
             # Google Docs
             if "docs.google.com/document" in url:
                 doc_id = re.search(r"/d/([a-zA-Z0-9-_]+)", url).group(1)
                 pdf_url = f"https://docs.google.com/document/d/{doc_id}/export?format=pdf"
-                r = session.get(pdf_url)
+                r = session.get(pdf_url, timeout=60)
                 if r.headers.get("Content-Type", "").startswith("application/pdf"):
-                    if save_to_supabase(r.content, url):
+                    if save_to_supabase(r.content, url, notice_title):
                         new_inserted = True
+                else:
+                    print("⚠️ Google Docs export didn't return PDF:", url)
                 continue
 
             # Google Drive file
@@ -131,29 +154,28 @@ def run_scraper():
                     print("❌ Drive download failed:", url, e)
                     continue
 
-                # basic validation: PDF header
                 if content and content[:4] == b"%PDF":
-                    if save_to_supabase(content, url):
+                    if save_to_supabase(content, url, notice_title):
                         new_inserted = True
                     continue
 
-                # fallback: try direct uc download and check headers
                 dl_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-                r = session.get(dl_url)
+                r = session.get(dl_url, timeout=60)
                 if r.headers.get("Content-Type", "").startswith("application/pdf"):
-                    if save_to_supabase(r.content, url):
+                    if save_to_supabase(r.content, url, notice_title):
                         new_inserted = True
                 else:
                     print("⚠️ Drive link didn't return a PDF:", url)
                 continue
 
             # Default IMSNSIT PDFs
-            r = session.get(url, headers={"Referer": NOTICES})
-            if "application/pdf" in r.headers.get("Content-Type", ""):
-                if save_to_supabase(r.content, url):
+            r = session.get(url, headers={"Referer": NOTICES}, timeout=30)
+            if "application/pdf" in r.headers.get("Content-Type", "") or (r.content and r.content[:4] == b"%PDF"):
+                if save_to_supabase(r.content, url, notice_title):
                     new_inserted = True
             else:
                 print("⚠️ Not a PDF:", url)
+
         except Exception as e:
             print("❌ Failed:", url, e)
 

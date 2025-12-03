@@ -83,7 +83,9 @@ def ocr_easy(img: Image.Image) -> str:
 def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List]]:
     """Extracts page-by-page text and tables. Returns combined_text and tables list (or None)."""
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp.write(pdf_bytes); tmp.flush(); pdf_path = tmp.name
+        tmp.write(pdf_bytes)
+        tmp.flush()
+        pdf_path = tmp.name
 
     page_texts = []
     table_blocks = []
@@ -96,7 +98,7 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List]]:
                 # if page_text is very small → OCR the page image
                 if not page_text or len(page_text) < OCR_THRESHOLD_CHARS:
                     try:
-                        pix = doc[p_idx-1].get_pixmap(dpi=300)
+                        pix = doc[p_idx - 1].get_pixmap(dpi=300)
                         img = image_from_pixmap(pix)
                         page_text = ocr_easy(img)
                     except Exception as e:
@@ -114,7 +116,12 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List]]:
                         # t is list of row-lists
                         if t and any(any(cell for cell in row if cell) for row in t):
                             # flatten table into text block
-                            rows = [" | ".join([str(cell) if cell is not None else "" for cell in row]) for row in t]
+                            rows = [
+                                " | ".join(
+                                    [str(cell) if cell is not None else "" for cell in row]
+                                )
+                                for row in t
+                            ]
                             table_text = f"[PAGE:{p_idx}] TABLE\n" + "\n".join(rows)
                             table_blocks.append(table_text)
                 except Exception:
@@ -153,9 +160,11 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List]]:
     return combined_text, (table_blocks if table_blocks else None)
 
 # ---------------- semantic chunking ----------------
-def chunk_text_semantic(text: str,
-                        target_words: int = TARGET_CHUNK_WORDS,
-                        overlap_words: int = CHUNK_OVERLAP_WORDS) -> List[str]:
+def chunk_text_semantic(
+    text: str,
+    target_words: int = TARGET_CHUNK_WORDS,
+    overlap_words: int = CHUNK_OVERLAP_WORDS
+) -> List[str]:
     """
     Sentence-aware sliding window chunker.
     - If total_words < SHORT_DOC_WORDS -> single chunk (preserve small docs)
@@ -213,13 +222,22 @@ def chunk_text_semantic(text: str,
     return chunks
 
 # ---------------- embed & store ----------------
-def create_chunk_embeddings_and_store(notice_id: str, filename: str, text: str, uploaded_at: Optional[str]=None):
-    # If tables exist inside text, ensure they are separated — (worker.extract_text_and_tables already provides)
+def create_chunk_embeddings_and_store(
+    notice_id: str,
+    filename: str,
+    text: str,
+    notice_title: Optional[str] = None,
+    uploaded_at: Optional[str] = None,
+) -> int:
+    """
+    Chunk text, create embeddings, and store in notice_chunks.
+    Each chunk carries notice_title for easier display in RAG.
+    """
     chunks = chunk_text_semantic(text)
     if not chunks:
         return 0
 
-    # Build rows with small provenance header (we don't change DB schema)
+    # Build rows with small provenance header; note notice_title is copied into each row
     rows = []
     for idx, c in enumerate(chunks):
         rows.append({
@@ -228,6 +246,7 @@ def create_chunk_embeddings_and_store(notice_id: str, filename: str, text: str, 
             "chunk_idx": idx,
             "chunk_text": c,
             "filename": filename,
+            "notice_title": notice_title,
             "uploaded_at": uploaded_at,
             "embedding": None,
             "processed_at": None
@@ -239,18 +258,20 @@ def create_chunk_embeddings_and_store(notice_id: str, filename: str, text: str, 
         eend = min(total, s + EMBED_BATCH)
         texts = [r["chunk_text"] for r in rows[s:eend]]
         vecs = embed_model.encode(texts, convert_to_numpy=True).tolist()
-        for i, v in enumerate(vecs, start=s):
-            rows[i]["embedding"] = v
-            rows[i]["processed_at"] = datetime.utcnow().isoformat()
+        for offset, v in enumerate(vecs):
+            idx = s + offset
+            rows[idx]["embedding"] = v
+            rows[idx]["processed_at"] = datetime.utcnow().isoformat()
 
-    # upsert in batches
+    # upsert in batches (fixed bug: use `s` instead of undefined `start`)
     for s in range(0, total, INSERT_BATCH):
         eend = min(total, s + INSERT_BATCH)
         batch = rows[s:eend]
-        # Use upsert if available — if not, fallback to insert
         try:
-            supabase.table("notice_chunks").upsert(rows[start:start+INSERT_BATCH],on_conflict="notice_id,chunk_idx").execute()
-
+            supabase.table("notice_chunks").upsert(
+                batch,
+                on_conflict="notice_id,chunk_idx"
+            ).execute()
         except Exception:
             for r in batch:
                 try:
@@ -260,7 +281,7 @@ def create_chunk_embeddings_and_store(notice_id: str, filename: str, text: str, 
     return total
 
 # ---------------- main worker ----------------
-def process_pending(limit:int=15):
+def process_pending(limit: int = 15):
     print("Fetching pending notices...")
     res = supabase.table("notices").select("*").eq("status", "pending").limit(limit).execute()
     notices = res.data or []
@@ -268,7 +289,8 @@ def process_pending(limit:int=15):
     for n in notices:
         nid = n["id"]
         fname = n.get("filename") or nid
-        print("Processing:", fname)
+        title = n.get("notice_title")   # pull notice_title from notices table
+        print("Processing:", fname, "| title:", title)
         # mark processing
         supabase.table("notices").update({"status": "processing"}).eq("id", nid).execute()
         try:
@@ -285,7 +307,13 @@ def process_pending(limit:int=15):
                 "processed_at": datetime.utcnow().isoformat()
             }).eq("id", nid).execute()
             # create chunks + embeddings
-            cnt = create_chunk_embeddings_and_store(nid, fname, text, uploaded_at=n.get("uploaded_at"))
+            cnt = create_chunk_embeddings_and_store(
+                notice_id=nid,
+                filename=fname,
+                text=text,
+                notice_title=title,
+                uploaded_at=n.get("uploaded_at")
+            )
             # finalize
             supabase.table("notices").update({
                 "status": "processed",
@@ -294,13 +322,17 @@ def process_pending(limit:int=15):
             print(f"✅ processed {fname} → {cnt} chunks")
         except Exception as e:
             print("❌ failed:", fname, str(e))
-            supabase.table("notices").update({"status":"failed", "error_msg": str(e)}).eq("id", nid).execute()
+            supabase.table("notices").update(
+                {"status": "failed", "error_msg": str(e)}
+            ).eq("id", nid).execute()
 
 # ---------------- backfill existing processed ----------------
-def rechunk_all_processed(batch_size:int=50):
+def rechunk_all_processed(batch_size: int = 50):
     offset = 0
     while True:
-        res = supabase.table("notices").select("id, filename, ocr_text, uploaded_at").eq("status","processed").range(offset, offset+batch_size-1).execute()
+        res = supabase.table("notices").select(
+            "id, filename, ocr_text, uploaded_at, notice_title"
+        ).eq("status", "processed").range(offset, offset + batch_size - 1).execute()
         rows = res.data or []
         if not rows:
             break
@@ -311,9 +343,16 @@ def rechunk_all_processed(batch_size:int=50):
             if chk.data:
                 print("Skipping:", nid)
                 continue
-            text = r.get("ocr_text","") or ""
+            text = r.get("ocr_text", "") or ""
             fname = r.get("filename") or nid
-            cnt = create_chunk_embeddings_and_store(nid, fname, text, uploaded_at=r.get("uploaded_at"))
+            title = r.get("notice_title")
+            cnt = create_chunk_embeddings_and_store(
+                notice_id=nid,
+                filename=fname,
+                text=text,
+                notice_title=title,
+                uploaded_at=r.get("uploaded_at")
+            )
             print("Backfilled", cnt, "chunks for", nid)
         offset += batch_size
 

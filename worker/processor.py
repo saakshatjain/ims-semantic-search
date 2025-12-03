@@ -70,8 +70,12 @@ def mmr_select(sentence_embs: np.ndarray, doc_emb: np.ndarray, top_k: int = 10, 
             # redundancy: max similarity to any selected
             red = 0.0
             for s in selected:
-                red = max(red, np.dot(sentence_embs[idx], sentence_embs[s]) /
-                             ((np.linalg.norm(sentence_embs[idx]) + 1e-10) * (np.linalg.norm(sentence_embs[s]) + 1e-10)))
+                red = max(
+                    red,
+                    np.dot(sentence_embs[idx], sentence_embs[s]) /
+                    ((np.linalg.norm(sentence_embs[idx]) + 1e-10) *
+                     (np.linalg.norm(sentence_embs[s]) + 1e-10))
+                )
             score = (1 - diversity) * relevance - diversity * red
             if score > best_score:
                 best_score = score
@@ -200,7 +204,7 @@ def create_leftover_chunks(sentences, used_flags, sentence_ranges, min_chars=100
 def process_pending_notices():
     # fetch notices with OCR done but not embedded
     response = supabase.table("notices") \
-        .select("id, ocr_text") \
+        .select("id, ocr_text, notice_title") \
         .eq("status", "processing") \
         .is_("clean_text", "null") \
         .execute()
@@ -208,6 +212,7 @@ def process_pending_notices():
     for record in response.data:
         notice_id = record["id"]
         ocr_text = record["ocr_text"]
+        notice_title = record.get("notice_title")
 
         try:
             # Step 1: Clean text
@@ -237,12 +242,23 @@ def process_pending_notices():
             important_text = " ".join(important_sentences).strip()
 
             # Step 5: Build semantic chunks (summary chunks) and get used flags
-            summary_chunks, used_flags = build_chunks(sentences, selected_indices, min_chars=250, max_chars=1200)
+            summary_chunks, used_flags = build_chunks(
+                sentences,
+                selected_indices,
+                min_chars=250,
+                max_chars=1200
+            )
 
             # Step 5b: Build leftover chunks to cover any unused sentences (guarantee no sentence omitted)
             leftover_chunks = []
             if sentences:
-                leftover_chunks = create_leftover_chunks(sentences, used_flags, sentence_ranges, min_chars=80, max_chars=1200)
+                leftover_chunks = create_leftover_chunks(
+                    sentences,
+                    used_flags,
+                    sentence_ranges,
+                    min_chars=80,
+                    max_chars=1200
+                )
 
             # Combine chunks (summary first, then leftovers)
             all_chunks = []
@@ -295,6 +311,7 @@ def process_pending_notices():
                     "start_char": chunk.get('start_char', -1),
                     "end_char": chunk.get('end_char', -1),
                     "is_summary": chunk.get('is_summary', False),
+                    "notice_title": notice_title,
                     "created_at": datetime.datetime.utcnow().isoformat()
                 }
                 supabase.table("notice_chunks").insert(row).execute()
