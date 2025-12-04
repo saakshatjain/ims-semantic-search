@@ -85,14 +85,18 @@ def run_scraper():
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0"})
 
-    # 1) First: current notices (no POST body, or simple GET)
+    # 1) Current notices
     resp = session.get(NOTICES, timeout=60)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
-    raw_links = [a["href"] for a in soup.find_all("a", href=True)]
 
-    # 2) Second: ARCHIVE / LOAD MORE – replicate your curl POST
-    # This is the important part: it’s what your browser does when you click the archive/load-more control
+    raw_entries = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        text = a.get_text(strip=True) or None
+        raw_entries.append((href, text))
+
+    # 2) Archive / old notices – replicate POST
     archive_payload = {
         "branch": "All",
         "olddata": "Archive: Click to View Old Notices / Circulars",
@@ -105,18 +109,30 @@ def run_scraper():
     )
     resp_arch.raise_for_status()
     soup_arch = BeautifulSoup(resp_arch.text, "html.parser")
-    raw_links += [a["href"] for a in soup_arch.find_all("a", href=True)]
-    links = []
-    for href in raw_links:
+
+    for a in soup_arch.find_all("a", href=True):
+        href = a["href"]
+        text = a.get_text(strip=True) or None
+        raw_entries.append((href, text))
+
+    # Deduplicate while keeping anchor text
+    seen = set()
+    links: list[tuple[str, str | None]] = []
+    for href, text in raw_entries:
         url = href if href.startswith("http") else f"{BASE}/{href}"
-        if url not in links:
-            links.append(url)
-    links=links[:200]        
+        if url not in seen:
+            seen.add(url)
+            links.append((url, text))
+
+    # Optional: limit to 200
+    links = links[:200]
+
     new_inserted = False
 
-    for i, url in enumerate(links, 1):
+    for i, (url, anchor_text) in enumerate(links, 1):
         url = url.replace("/view", "/edit")
         notice_title = clean_notice_title(anchor_text)
+
         print(f"\n[{i}] Processing: {url}")
         print(f"   anchor: {anchor_text}")
         print(f"   notice_title (cleaned): {notice_title}")
@@ -148,7 +164,7 @@ def run_scraper():
                     print("⚠️ Google Docs export didn't return PDF:", url)
                 continue
 
-            # Google Drive file
+            # Google Drive file (generic)
             if "drive.google.com" in url or "docs.google.com" in url:
                 file_id = _get_drive_file_id(url)
                 if not file_id:
@@ -186,6 +202,7 @@ def run_scraper():
             print("❌ Failed:", url, e)
 
     return new_inserted
+
 
 # --- MAIN PIPELINE ---
 if __name__ == "__main__":
