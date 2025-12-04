@@ -78,7 +78,7 @@ def get_notice_link(notice_id: str, filename: str) -> str:
     Will append `download` parameter manually.
     """
     bucket = "notices_new"
-    folder = "notices_new"
+    folder = "notices"
     file_path = f"{folder}/{filename}" if filename else f"{folder}/{notice_id}.pdf"
 
     try:
