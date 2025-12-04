@@ -307,7 +307,7 @@ def process_pending(limit: int = 15):
             file_path = f"notices_new/{fname}"
         supabase.table("notices_new").update({"status": "processing"}).eq("id", nid).execute()
         try:
-            dl = supabase.storage.from_("notices_new").download(n["file_path"])
+            dl = supabase.storage.from_("notices_new").download(file_path)
             pdf_bytes = dl.read() if hasattr(dl, "read") else dl
             text, tables = extract_text_and_tables(pdf_bytes)
             # Append table blocks (if any) as separate text sections to preserve them

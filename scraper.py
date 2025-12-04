@@ -44,6 +44,7 @@ def save_to_supabase(file_bytes, url, notice_title: str | None):
         "id": notice_id,
         "url": url,
         "filename": filename,
+        "file_path": path_in_bucket,
         "status": "pending",
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "notice_title": notice_title,
