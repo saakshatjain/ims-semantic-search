@@ -124,8 +124,8 @@ def run_scraper():
             seen.add(url)
             links.append((url, text))
 
-    # Optional: limit to 20
-    links = links[:20]
+    # Optional: limit to 200
+    links = links[:200]
 
     new_inserted = False
 
