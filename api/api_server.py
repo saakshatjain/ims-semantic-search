@@ -77,8 +77,8 @@ def get_notice_link(notice_id: str, filename: str) -> str:
     Generates a signed URL with download prompt for a notice stored in Supabase Storage.
     Will append `download` parameter manually.
     """
-    bucket = "notices"
-    folder = "notices"
+    bucket = "notices_new"
+    folder = "notices_new"
     file_path = f"{folder}/{filename}" if filename else f"{folder}/{notice_id}.pdf"
 
     try:
