@@ -104,7 +104,7 @@ def fetch_notices_ocr(notice_ids: List[Any]) -> Dict[str, str]:
     """
     if not notice_ids:
         return {}
-    res = supabase.table("notices").select("id, ocr_text").in_("id", notice_ids).execute()
+    res = supabase.table("notices_new").select("id, ocr_text").in_("id", notice_ids).execute()
     rows = res.data or []
     return {str(r["id"]): (r.get("ocr_text") or "") for r in rows}
 
