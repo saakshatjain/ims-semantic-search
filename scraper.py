@@ -149,7 +149,7 @@ def run_scraper():
             seen.add(url)
             links.append((url, text))
 
-    links = links[:200]
+    links = links[:20]
     new_inserted = False
 
     for i, (url, anchor_text) in enumerate(links, 1):
