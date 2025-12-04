@@ -34,7 +34,7 @@ def save_to_supabase(file_bytes, url, notice_title: str | None):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     short_hash = notice_id[:8]
     filename = f"notice_{timestamp}_{short_hash}.pdf"
-    path_in_bucket = f"notices_new/{filename}"
+    path_in_bucket = filename
 
     # Upload to storage
     supabase.storage.from_("notices_new").upload(path_in_bucket, file_bytes)
@@ -44,7 +44,6 @@ def save_to_supabase(file_bytes, url, notice_title: str | None):
         "id": notice_id,
         "url": url,
         "filename": filename,
-        "file_path": path_in_bucket,
         "status": "pending",
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "notice_title": notice_title,

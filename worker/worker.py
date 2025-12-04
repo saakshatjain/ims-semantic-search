@@ -299,12 +299,9 @@ def process_pending(limit: int = 15):
         nid = n["id"]
         fname = n.get("filename") or nid
         title = n.get("notice_title")   # pull notice_title from notices table
+        file_path = n.get("file_path") or fname
         print("Processing:", fname, "| title:", title)
         # mark processing
-        file_path = n.get("file_path")
-        if not file_path:
-            # backward-compatible assumption if older rows only have filename
-            file_path = f"notices_new/{fname}"
         supabase.table("notices_new").update({"status": "processing"}).eq("id", nid).execute()
         try:
             dl = supabase.storage.from_("notices_new").download(file_path)
