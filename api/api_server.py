@@ -77,7 +77,7 @@ def get_notice_link(notice_id: str, filename: str) -> str:
     Generates a signed URL with download prompt for a notice stored in Supabase Storage.
     Will append `download` parameter manually.
     """
-    bucket = "notices_new"
+    bucket = "notices_new_2"
     folder = ""
     file_path = f"{folder}/{filename}" if filename else f"{folder}/{notice_id}.pdf"
 
@@ -104,7 +104,7 @@ def fetch_notices_ocr(notice_ids: List[Any]) -> Dict[str, str]:
     """
     if not notice_ids:
         return {}
-    res = supabase.table("notices_new").select("id, ocr_text").in_("id", notice_ids).execute()
+    res = supabase.table("notices_new_2").select("id, ocr_text").in_("id", notice_ids).execute()
     rows = res.data or []
     return {str(r["id"]): (r.get("ocr_text") or "") for r in rows}
 

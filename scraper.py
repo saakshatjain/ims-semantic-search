@@ -9,7 +9,7 @@ BASE = "https://www.imsnsit.org/imsnsit"
 NOTICES = f"{BASE}/notifications.php"
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-BUCKET_NAME = "notices_new"
+BUCKET_NAME = "notices_new_2"
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     print("❌ Error: SUPABASE_URL and SUPABASE_KEY environment variables are missing.")
@@ -34,7 +34,7 @@ def ensure_bucket_exists():
 
 def notice_exists(notice_id: str) -> bool:
     try:
-        res = supabase.table("notices_new").select("id").eq("id", notice_id).execute()
+        res = supabase.table("notices_new_2").select("id").eq("id", notice_id).execute()
         return len(res.data) > 0
     except Exception as e:
         print(f"❌ DB Check Error: {e}")
@@ -67,7 +67,7 @@ def save_to_supabase(file_bytes, url, notice_title: str | None):
 
     # Insert metadata in DB
     try:
-        supabase.table("notices_new").insert({
+        supabase.table("notices_new_2").insert({
             "id": notice_id,
             "url": url,
             "filename": filename,

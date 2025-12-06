@@ -295,7 +295,7 @@ def chunk_table_rows(rows: List[Dict[str, Any]], max_rows: int = MAX_ROWS_PER_CH
 # ---------------- embed & store helpers ----------------
 def upsert_row_embeddings(notice_id: str, filename: str, rows: List[Dict[str, Any]], notice_title: Optional[str] = None) -> int:
     """
-    Create embeddings for each table row (one embedding per row) and upsert to notice_chunks_new.
+    Create embeddings for each table row (one embedding per row) and upsert to notice_chunks_new_2.
     Uses chunk_idx offset to avoid colliding with text chunk_idx values.
     """
     if not rows:
@@ -334,11 +334,11 @@ def upsert_row_embeddings(notice_id: str, filename: str, rows: List[Dict[str, An
         e = min(total, s + INSERT_BATCH)
         batch = records[s:e]
         try:
-            supabase.table("notice_chunks_new").upsert(batch, on_conflict="notice_id,chunk_idx").execute()
+            supabase.table("notice_chunks_new_2").upsert(batch, on_conflict="notice_id,chunk_idx").execute()
         except Exception:
             for r in batch:
                 try:
-                    supabase.table("notice_chunks_new").insert(r).execute()
+                    supabase.table("notice_chunks_new_2").insert(r).execute()
                 except Exception as e:
                     print("row chunk insert failed", r["id"], str(e))
     return total
@@ -382,11 +382,11 @@ def upsert_multirow_chunks(notice_id: str, filename: str, chunks: List[Dict[str,
         e = min(total, s + INSERT_BATCH)
         batch = records[s:e]
         try:
-            supabase.table("notice_chunks_new").upsert(batch, on_conflict="notice_id,chunk_idx").execute()
+            supabase.table("notice_chunks_new_2").upsert(batch, on_conflict="notice_id,chunk_idx").execute()
         except Exception:
             for r in batch:
                 try:
-                    supabase.table("notice_chunks_new").insert(r).execute()
+                    supabase.table("notice_chunks_new_2").insert(r).execute()
                 except Exception as e:
                     print("multi-row chunk insert failed", r["id"], str(e))
     return total
@@ -400,7 +400,7 @@ def create_text_chunk_embeddings_and_store(
     uploaded_at: Optional[str] = None,
 ) -> int:
     """
-    Chunk prose text semantics and store in notice_chunks_new using previous logic.
+    Chunk prose text semantics and store in notice_chunks_new_2 using previous logic.
     """
     if not text or not text.strip():
         return 0
@@ -444,11 +444,11 @@ def create_text_chunk_embeddings_and_store(
         eend = min(total, s + INSERT_BATCH)
         batch = rows[s:eend]
         try:
-            supabase.table("notice_chunks_new").upsert(batch, on_conflict="notice_id,chunk_idx").execute()
+            supabase.table("notice_chunks_new_2").upsert(batch, on_conflict="notice_id,chunk_idx").execute()
         except Exception:
             for r in batch:
                 try:
-                    supabase.table("notice_chunks_new").insert(r).execute()
+                    supabase.table("notice_chunks_new_2").insert(r).execute()
                 except Exception as e:
                     print("text chunk insert failed", r["id"], str(e))
     return total
@@ -456,7 +456,7 @@ def create_text_chunk_embeddings_and_store(
 # ---------------- main worker ----------------
 def process_pending(limit: int = 15):
     print("Fetching pending notices...")
-    res = supabase.table("notices_new").select("*").eq("status", "pending").execute()
+    res = supabase.table("notices_new_2").select("*").eq("status", "pending").execute()
     notices = res.data or []
     print(f"Found {len(notices)} pending notices")
     for n in notices:
@@ -470,9 +470,9 @@ def process_pending(limit: int = 15):
         clean_filename = os.path.basename(raw_name)
         print("Processing:", fname, "| title:", title)
         # mark processing
-        supabase.table("notices_new").update({"status": "processing"}).eq("id", nid).execute()
+        supabase.table("notices_new_2").update({"status": "processing"}).eq("id", nid).execute()
         try:
-            dl = supabase.storage.from_("notices_new").download(clean_filename)
+            dl = supabase.storage.from_("notices_new_2").download(clean_filename)
             pdf_bytes = dl.read() if hasattr(dl, "read") else dl
             text, tables = extract_text_and_tables(pdf_bytes)
 
@@ -508,14 +508,14 @@ def process_pending(limit: int = 15):
             )
 
             # store OCR text + raw tables JSON for debugging & possible future reprocessing
-            supabase.table("notices_new").update({
+            supabase.table("notices_new_2").update({
                 "ocr_text": text,
                 "ocr_tables": json.dumps(tables) if tables else None,
                 "processed_at": datetime.utcnow().isoformat()
             }).eq("id", nid).execute()
 
             # finalize
-            supabase.table("notices_new").update({
+            supabase.table("notices_new_2").update({
                 "status": "processed",
                 "embedding_model": "all-MiniLM-L6-v2"
             }).eq("id", nid).execute()
@@ -524,7 +524,7 @@ def process_pending(limit: int = 15):
             print(f"✅ processed {fname} → text_chunks: {text_cnt}, row_chunks: {rows_cnt}, multi_chunks: {multi_cnt} (total {total_chunks})")
         except Exception as e:
             print("❌ failed:", fname, str(e))
-            supabase.table("notices_new").update(
+            supabase.table("notices_new_2").update(
                 {"status": "failed", "error_msg": str(e)}
             ).eq("id", nid).execute()
 
@@ -532,7 +532,7 @@ def process_pending(limit: int = 15):
 def rechunk_all_processed(batch_size: int = 50):
     offset = 0
     while True:
-        res = supabase.table("notices_new").select(
+        res = supabase.table("notices_new_2").select(
             "id, filename, ocr_text, uploaded_at, notice_title"
         ).eq("status", "processed").range(offset, offset + batch_size - 1).execute()
         rows = res.data or []
@@ -541,7 +541,7 @@ def rechunk_all_processed(batch_size: int = 50):
         for r in rows:
             nid = r["id"]
             # skip if chunks exist
-            chk = supabase.table("notice_chunks_new").select("id").eq("notice_id", nid).limit(1).execute()
+            chk = supabase.table("notice_chunks_new_2").select("id").eq("notice_id", nid).limit(1).execute()
             if chk.data:
                 print("Skipping:", nid)
                 continue
