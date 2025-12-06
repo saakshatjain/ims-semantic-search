@@ -390,6 +390,56 @@ def upsert_multirow_chunks(notice_id: str, filename: str, chunks: List[Dict[str,
                 except Exception as e:
                     print("multi-row chunk insert failed", r["id"], str(e))
     return total
+def chunk_text_semantic(
+    text: str,
+    target_words: int = TARGET_CHUNK_WORDS,
+    overlap_words: int = CHUNK_OVERLAP_WORDS
+) -> List[str]:
+    """
+    Sentence-aware sliding window chunker.
+    If total_words < SHORT_DOC_WORDS -> single chunk.
+    """
+    if not text or not text.strip():
+        return []
+
+    total_words = len(text.split())
+    if total_words <= SHORT_DOC_WORDS:
+        return [text.strip()]
+
+    sentences = split_into_sentences(text)
+    sent_word_counts = [len(s.split()) for s in sentences]
+
+    chunks = []
+    i = 0
+    n = len(sentences)
+
+    def overlap_sentences_from_end(j, overlap_words_target):
+        k = 0
+        acc = 0
+        while j - 1 - k >= 0 and acc < overlap_words_target:
+            acc += sent_word_counts[j - 1 - k]
+            k += 1
+        return k
+
+    while i < n:
+        j = i
+        acc = 0
+        while j < n and acc < target_words:
+            acc += sent_word_counts[j]
+            j += 1
+
+        chunk = " ".join(sentences[i:j]).strip()
+        if chunk:
+            chunks.append(chunk)
+
+        overlap_sentences = overlap_sentences_from_end(j, overlap_words)
+        i = max(j - overlap_sentences, j - 1, i + 1)
+
+    if len(chunks) >= 2 and len(chunks[-1].split()) < target_words // 4:
+        chunks[-2] += "\n\n" + chunks[-1]
+        chunks.pop()
+
+    return chunks
 
 # Keep your existing text chunk + embed function (slightly renamed for clarity)
 def create_text_chunk_embeddings_and_store(
