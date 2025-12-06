@@ -506,7 +506,13 @@ def create_text_chunk_embeddings_and_store(
 # ---------------- main worker ----------------
 def process_pending(limit: int = 15):
     print("Fetching pending notices...")
-    res = supabase.table("notices_new_2").select("*").eq("status", "pending").execute()
+    res = (
+    supabase.table("notices_new_2")
+    .select("*")
+    .in_("status", ["pending", "failed"])
+    .execute()
+)
+
     notices = res.data or []
     print(f"Found {len(notices)} pending notices")
     for n in notices:
