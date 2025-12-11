@@ -1,10 +1,5 @@
 name: Notices Pipeline
 
-on:
-  schedule:
-    - cron: "30 3-11 * * *"   # every hour 9:30–17:30 IST
-  workflow_dispatch:
-
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
