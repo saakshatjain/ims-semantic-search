@@ -31,11 +31,22 @@ co = cohere.Client(COHERE_API_KEY)
 # Embedding model
 embedder = TextEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
+from fastapi.middleware.cors import CORSMiddleware
+
 # -------------- FastAPI --------------
 app = FastAPI(title="NSUT RAG Retrieval API")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 class RetrieveRequest(BaseModel):
     query: str
+    search_query: str | None = None
     top_k: int = 10          # how many chunks to return after reranking
     prefetch_k: int = 50     # how many candidates to fetch from Supabase before rerank
 
@@ -190,7 +201,10 @@ def retrieve(req: RetrieveRequest, api_key: str = Header(None)):
 
     # 2) Retrieve candidates using Hybrid Search (Dense + Sparse)
     vector_candidates = supabase_vector_search(q_vec, req.prefetch_k)
-    keyword_candidates = supabase_keyword_search(req.query, req.prefetch_k)
+    
+    # Use search_query for better keyword matching if provided by orchestrator
+    kw_query = req.search_query if req.search_query else req.query
+    keyword_candidates = supabase_keyword_search(kw_query, req.prefetch_k)
     
     # Combine using Reciprocal Rank Fusion (RRF)
     candidates = compute_rrf(vector_candidates, keyword_candidates)
