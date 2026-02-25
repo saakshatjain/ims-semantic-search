@@ -9,6 +9,7 @@ BASE = "https://www.imsnsit.org/imsnsit"
 NOTICES = f"{BASE}/notifications.php"
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+COHERE_API_KEY = os.environ.get("COHERE_API_KEY")
 BUCKET_NAME = "notices_new_2"
 
 if not SUPABASE_URL or not SUPABASE_KEY:

@@ -57,6 +57,56 @@ def supabase_vector_search(query_vec: List[float], k: int) -> List[Dict[str, Any
     ).execute()
     return res.data or []
 
+def supabase_keyword_search(query: str, k: int) -> List[Dict[str, Any]]:
+    """
+    Performs a full text search using Supabase's built-in textSearch.
+    This acts as our sparse retrieval (BM25 equivalent).
+    """
+    clean_query = query.replace("'", "").replace('"', "")
+    try:
+        res = (
+            supabase.table("notice_chunks_new_2")
+            .select("id, notice_id, chunk_idx, chunk_text, filename, uploaded_at, notice_title")
+            .textSearch("chunk_text", clean_query, options={"config": "english", "type": "websearch"})
+            .limit(k)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"Keyword search failed: {e}")
+        return []
+
+def compute_rrf(vector_docs: List[Dict[str, Any]], keyword_docs: List[Dict[str, Any]], k: int = 60) -> List[Dict[str, Any]]:
+    """
+    Reciprocal Rank Fusion (RRF) to combine ranks from dense and sparse retrieval.
+    """
+    rrf_scores = {}
+    doc_map = {}
+    
+    def add_ranks(docs):
+        for rank, doc in enumerate(docs):
+            doc_id = doc.get("id")
+            if not doc_id:
+                continue
+            if doc_id not in rrf_scores:
+                rrf_scores[doc_id] = 0.0
+                doc_map[doc_id] = doc
+            rrf_scores[doc_id] += 1.0 / (k + rank + 1)
+            
+    add_ranks(vector_docs)
+    add_ranks(keyword_docs)
+    
+    # Sort docs by RRF score descending
+    sorted_doc_ids = sorted(rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True)
+    
+    results = []
+    for doc_id in sorted_doc_ids:
+        doc = doc_map[doc_id]
+        doc["similarity"] = rrf_scores[doc_id] # override similarity with standardized RRF score
+        results.append(doc)
+        
+    return results
+
 def rerank_with_cohere(query: str, docs: List[str], top_n: int) -> List[int]:
     """
     Rerank candidates using Cohere on SHORT docs.
@@ -138,8 +188,13 @@ def retrieve(req: RetrieveRequest, api_key: str = Header(None)):
     # 1) Embed the query
     q_vec = embed_minilm(req.query)
 
-    # 2) Retrieve top-N candidate chunks from Supabase
-    candidates = supabase_vector_search(q_vec, req.prefetch_k)
+    # 2) Retrieve candidates using Hybrid Search (Dense + Sparse)
+    vector_candidates = supabase_vector_search(q_vec, req.prefetch_k)
+    keyword_candidates = supabase_keyword_search(req.query, req.prefetch_k)
+    
+    # Combine using Reciprocal Rank Fusion (RRF)
+    candidates = compute_rrf(vector_candidates, keyword_candidates)
+    
     if not candidates:
         return {"query": req.query, "chunks": []}
 

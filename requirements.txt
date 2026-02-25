@@ -10,3 +10,8 @@ sentence-transformers
 numpy
 pdf2image
 easyocr
+fastapi
+uvicorn
+cohere
+fastembed
+onnxruntime

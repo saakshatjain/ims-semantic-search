@@ -393,11 +393,11 @@ def upsert_multirow_chunks(notice_id: str, filename: str, chunks: List[Dict[str,
 def chunk_text_semantic(
     text: str,
     target_words: int = TARGET_CHUNK_WORDS,
-    overlap_words: int = CHUNK_OVERLAP_WORDS
+    overlap_words: int = CHUNK_OVERLAP_WORDS,
 ) -> List[str]:
     """
-    Sentence-aware sliding window chunker.
-    If total_words < SHORT_DOC_WORDS -> single chunk.
+    Semantic chunking using sentence embeddings to find boundaries.
+    Groups sentences based on similarity, splitting when context drifts.
     """
     if not text or not text.strip():
         return []
@@ -407,34 +407,59 @@ def chunk_text_semantic(
         return [text.strip()]
 
     sentences = split_into_sentences(text)
-    sent_word_counts = [len(s.split()) for s in sentences]
+    if not sentences:
+        return []
+
+    if len(sentences) <= 3:
+        return [" ".join(sentences)]
+
+    # Embed sequences to calculate semantic similarity
+    embeddings = embed_model.encode(sentences, convert_to_numpy=True)
+    
+    similarities = []
+    for i in range(1, len(sentences)):
+        # Cosine similarity between adjacent sentences
+        sim = float(np.dot(embeddings[i-1], embeddings[i]) / 
+                   (np.linalg.norm(embeddings[i-1]) * np.linalg.norm(embeddings[i]) + 1e-10))
+        similarities.append(sim)
+        
+    # Split points: bottom 25th percentile of similarities (most dissimilar transitions)
+    threshold = float(np.percentile(similarities, 25))
 
     chunks = []
-    i = 0
-    n = len(sentences)
+    current_chunk = [sentences[0]]
+    current_words = len(sentences[0].split())
 
-    def overlap_sentences_from_end(j, overlap_words_target):
-        k = 0
-        acc = 0
-        while j - 1 - k >= 0 and acc < overlap_words_target:
-            acc += sent_word_counts[j - 1 - k]
-            k += 1
-        return k
+    for i in range(1, len(sentences)):
+        sim = similarities[i-1]
+        sent_words = len(sentences[i].split())
+        
+        # Split condition:
+        # 1. Semantic drift (similarity < threshold) AND we have a decent chunk size
+        # 2. OR hard limit on chunk size to avoid infinite chunks
+        if (sim < threshold and current_words > target_words // 2) or current_words + sent_words > target_words * 1.5:
+            chunks.append(" ".join(current_chunk))
+            
+            # Create overlap
+            overlap_acc = 0
+            overlap_sents = []
+            for s in reversed(current_chunk):
+                ws = len(s.split())
+                if overlap_acc + ws > overlap_words:
+                    break
+                overlap_sents.insert(0, s)
+                overlap_acc += ws
+                
+            current_chunk = overlap_sents + [sentences[i]]
+            current_words = sum(len(s.split()) for s in current_chunk)
+        else:
+            current_chunk.append(sentences[i])
+            current_words += sent_words
 
-    while i < n:
-        j = i
-        acc = 0
-        while j < n and acc < target_words:
-            acc += sent_word_counts[j]
-            j += 1
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
 
-        chunk = " ".join(sentences[i:j]).strip()
-        if chunk:
-            chunks.append(chunk)
-
-        overlap_sentences = overlap_sentences_from_end(j, overlap_words)
-        i = max(j - overlap_sentences, j - 1, i + 1)
-
+    # Combine trailing tiny chunks
     if len(chunks) >= 2 and len(chunks[-1].split()) < target_words // 4:
         chunks[-2] += "\n\n" + chunks[-1]
         chunks.pop()
