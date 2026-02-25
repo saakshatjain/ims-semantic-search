@@ -1,5 +1,11 @@
 name: Notices Pipeline
 
+on:
+  schedule:
+    # 0 4-12 * * * in UTC is 9:30 AM to 5:30 PM IST (so "9-5 each hr" in local time)
+    - cron: '0 4-12 * * *'
+  workflow_dispatch:
+
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
