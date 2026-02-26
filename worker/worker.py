@@ -94,7 +94,8 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List[str]]]
                 # if page_text is very small → OCR the page image
                 if not page_text or len(page_text) < OCR_THRESHOLD_CHARS:
                     try:
-                        pix = doc[p_idx - 1].get_pixmap(dpi=300)
+                        # Use 150 DPI instead of 300 DPI to avoid GitHub Actions OOM crashes
+                        pix = doc[p_idx - 1].get_pixmap(dpi=150)
                         img = image_from_pixmap(pix)
                         page_text = ocr_easy(img)
                     except Exception:

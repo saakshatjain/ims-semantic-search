@@ -218,18 +218,6 @@ if __name__ == "__main__":
     added_new = run_scraper()
 
     if added_new:
-        print("✅ New notices added. Triggering worker...")
-        
-        # Check if worker file exists to avoid confusing errors
-        if os.path.exists("worker/worker.py"):
-            exit_code = os.system("python worker/worker.py")
-            if exit_code != 0:
-                print("❌ Worker failed.")
-        else:
-            print("⚠️ worker/worker.py not found. Skipping OCR.")
-
-        # You did not share processor.py, so I added a check here too
-        if os.path.exists("worker/processor.py"):
-             os.system("python worker/processor.py")
+        print("✅ New notices added. Worker will be triggered by GitHub Actions.")
     else:
         print("⚠️ No new notices found.")
