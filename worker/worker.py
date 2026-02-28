@@ -16,7 +16,7 @@ from PIL import Image
 from supabase import create_client
 from sentence_transformers import SentenceTransformer
 
-import easyocr
+# easyocr is lazy-loaded only when needed to save ~3GB of RAM at startup
 import logging
 
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
@@ -48,11 +48,8 @@ ROW_CHUNK_OVERLAP = int(os.environ.get("ROW_CHUNK_OVERLAP", 2))      # overlap r
 # ---------------- clients ----------------
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 embed_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-try:
-    ocr_reader = easyocr.Reader(['en'], gpu=False)  # CPU
-except Exception as e:
-    print(f"⚠️ Warning: Failed to load EasyOCR (Likely 502 Server Error on jaided.ai). Skipping OCR module: {e}")
-    ocr_reader = None
+# EasyOCR is NOT loaded here. It consumes ~3-4GB of RAM.
+# It is lazy-loaded inside ocr_easy() only when a page genuinely needs OCR.
 
 # ---------------- utilities ----------------
 _recent_newlines_re = re.compile(r'(?<!\n)\n(?!\n)')
@@ -77,15 +74,34 @@ def image_from_pixmap(pix) -> Image.Image:
     return Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
 
 def ocr_easy(img: Image.Image) -> str:
-    if ocr_reader is None:
+    """Lazy-load EasyOCR, run OCR, then immediately unload to free ~3GB of RAM."""
+    try:
+        import easyocr
+        print("  [OCR] Loading EasyOCR model (this uses ~3GB RAM temporarily)...", flush=True)
+        reader = easyocr.Reader(['en'], gpu=False)
+    except Exception as e:
+        print(f"  [OCR] Failed to load EasyOCR: {e}", flush=True)
         return ""
+    
     arr = np.array(img)
-    res = ocr_reader.readtext(arr)
+    try:
+        res = reader.readtext(arr)
+    except Exception as e:
+        print(f"  [OCR] EasyOCR inference failed: {e}", flush=True)
+        del arr, reader
+        gc.collect()
+        return ""
+    
     lines = []
     for r in res:
         if len(r) >= 2 and r[1].strip():
             lines.append(r[1].strip())
-    del arr
+    
+    # CRITICAL: Unload EasyOCR immediately to reclaim ~3GB of RAM
+    del arr, reader
+    gc.collect()
+    print("  [OCR] EasyOCR unloaded, RAM freed.", flush=True)
+    
     return "\n".join(lines).strip()
 
 # ---------------- PDF extraction ----------------
