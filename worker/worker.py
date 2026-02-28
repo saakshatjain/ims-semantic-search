@@ -548,7 +548,7 @@ def create_text_chunk_embeddings_and_store(
 def timeout_handler(signum, frame):
     raise TimeoutError("Processing file took too long (timeout)")
 
-def process_pending(limit: int = 3):
+def process_pending(limit: int = 5) -> int:
     print(f"Fetching up to {limit} pending notices...")
     res = (
     supabase.table("notices_new_2")
@@ -559,7 +559,11 @@ def process_pending(limit: int = 3):
 )
 
     notices = res.data or []
-    print(f"Found {len(notices)} pending notices")
+    if not notices:
+        print("No pending notices found.")
+        return 0
+        
+    print(f"Found {len(notices)} pending notices in this batch.")
     for n in notices:
         nid = n["id"]
         fname = n.get("filename") or nid
@@ -636,8 +640,10 @@ def process_pending(limit: int = 3):
             # Disable the alarm
             signal.alarm(0)
             
-            # Explicitly free memory to prevent 16Gi RAM crashes on Hugging Face
+            # Explicitly free memory after EVERY SINGLE NOTICE to prevent 16Gi RAM crashes
             gc.collect()
+            
+    return len(notices)
 
 # ---------------- backfill existing processed ----------------
 def rechunk_all_processed(batch_size: int = 50):
@@ -670,4 +676,13 @@ def rechunk_all_processed(batch_size: int = 50):
         offset += batch_size
 
 if __name__ == "__main__":
-    process_pending(limit=3)
+    print("🚀 Starting continuous backfill processor...")
+    while True:
+        processed_count = process_pending(limit=5)
+        # If process_pending returns 0, the queue is empty!
+        if processed_count == 0:
+            print("✅ Queue is empty! Shutting down worker until next schedule.")
+            break
+        
+        # Aggressively release all straggling memory between batches
+        gc.collect()
