@@ -108,8 +108,8 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List[str]]]
                 # if page_text is very small → OCR the page image
                 if not page_text or len(page_text) < OCR_THRESHOLD_CHARS:
                     try:
-                        # Use 150 DPI instead of 300 DPI to avoid GitHub Actions OOM crashes
-                        pix = doc[p_idx - 1].get_pixmap(dpi=150)
+                        # Use 100 DPI instead of 150 DPI to drastically save PyTorch EasyOCR image tensor RAM size
+                        pix = doc[p_idx - 1].get_pixmap(dpi=100)
                         img = image_from_pixmap(pix)
                         page_text = ocr_easy(img)
                         del pix
@@ -146,7 +146,7 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List[str]]]
         try:
             doc = fitz.open(pdf_path)
             for p_idx, page in enumerate(doc, start=1):
-                pix = page.get_pixmap(dpi=150) # Fallback to 150 DPI to save ram
+                pix = page.get_pixmap(dpi=100) # Fallback to 100 DPI to save ram
                 img = image_from_pixmap(pix)
                 page_text = ocr_easy(img)
                 if page_text:
@@ -658,6 +658,14 @@ def process_pending(limit: int = 5) -> int:
         finally:
             # Disable the alarm
             signal.alarm(0)
+            
+            # Wipe massive PDF string and tensor byte variables manually before calling GC
+            pdf_bytes = None
+            text = None
+            tables = None
+            table_rows = None
+            multi_chunks = None
+            dl = None
             
             # Explicitly free memory after EVERY SINGLE NOTICE to prevent 16Gi RAM crashes
             gc.collect()
