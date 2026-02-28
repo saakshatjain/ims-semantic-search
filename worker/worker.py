@@ -16,7 +16,7 @@ from PIL import Image
 from supabase import create_client
 from sentence_transformers import SentenceTransformer
 
-# easyocr is lazy-loaded only when needed to save ~3GB of RAM at startup
+import easyocr
 import logging
 
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
@@ -48,8 +48,7 @@ ROW_CHUNK_OVERLAP = int(os.environ.get("ROW_CHUNK_OVERLAP", 2))      # overlap r
 # ---------------- clients ----------------
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 embed_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-# EasyOCR is NOT loaded here. It consumes ~3-4GB of RAM.
-# It is lazy-loaded inside ocr_easy() only when a page genuinely needs OCR.
+ocr_reader = easyocr.Reader(['en'], gpu=False)  # CPU
 
 # ---------------- utilities ----------------
 _recent_newlines_re = re.compile(r'(?<!\n)\n(?!\n)')
@@ -74,34 +73,12 @@ def image_from_pixmap(pix) -> Image.Image:
     return Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
 
 def ocr_easy(img: Image.Image) -> str:
-    """Lazy-load EasyOCR, run OCR, then immediately unload to free ~3GB of RAM."""
-    try:
-        import easyocr
-        print("  [OCR] Loading EasyOCR model (this uses ~3GB RAM temporarily)...", flush=True)
-        reader = easyocr.Reader(['en'], gpu=False)
-    except Exception as e:
-        print(f"  [OCR] Failed to load EasyOCR: {e}", flush=True)
-        return ""
-    
     arr = np.array(img)
-    try:
-        res = reader.readtext(arr)
-    except Exception as e:
-        print(f"  [OCR] EasyOCR inference failed: {e}", flush=True)
-        del arr, reader
-        gc.collect()
-        return ""
-    
+    res = ocr_reader.readtext(arr)
     lines = []
     for r in res:
         if len(r) >= 2 and r[1].strip():
             lines.append(r[1].strip())
-    
-    # CRITICAL: Unload EasyOCR immediately to reclaim ~3GB of RAM
-    del arr, reader
-    gc.collect()
-    print("  [OCR] EasyOCR unloaded, RAM freed.", flush=True)
-    
     return "\n".join(lines).strip()
 
 # ---------------- PDF extraction ----------------
@@ -124,12 +101,10 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List[str]]]
                 # if page_text is very small → OCR the page image
                 if not page_text or len(page_text) < OCR_THRESHOLD_CHARS:
                     try:
-                        # Use 100 DPI instead of 150 DPI to drastically save PyTorch EasyOCR image tensor RAM size
-                        pix = doc[p_idx - 1].get_pixmap(dpi=100)
+                        # Use 150 DPI instead of 300 DPI to avoid GitHub Actions OOM crashes
+                        pix = doc[p_idx - 1].get_pixmap(dpi=300)
                         img = image_from_pixmap(pix)
                         page_text = ocr_easy(img)
-                        del pix
-                        del img
                     except Exception:
                         page_text = page_text or ""
                 if page_text:
@@ -151,26 +126,16 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List[str]]]
                             table_blocks.append(table_text)
                 except Exception:
                     pass
-                finally:
-                    # VERY IMPORTANT: pdfplumber caches parsed objects per page, eating gigabytes of RAM
-                    page.flush_cache()
-                    # Do a mini garbage collect per page for large documents
-                    gc.collect()
-        doc.close()
     except Exception:
         # Very defensive: full OCR fallback with fitz
         try:
             doc = fitz.open(pdf_path)
             for p_idx, page in enumerate(doc, start=1):
-                pix = page.get_pixmap(dpi=100) # Fallback to 100 DPI to save ram
+                pix = page.get_pixmap(dpi=300)
                 img = image_from_pixmap(pix)
                 page_text = ocr_easy(img)
                 if page_text:
                     page_texts.append(f"[PAGE:{p_idx}]\n" + page_text)
-                del pix
-                del img
-                gc.collect()
-            doc.close()
         except Exception as e2:
             print("Critical: full fallback failed:", e2)
 
@@ -674,14 +639,6 @@ def process_pending(limit: int = 5) -> int:
         finally:
             # Disable the alarm
             signal.alarm(0)
-            
-            # Wipe massive PDF string and tensor byte variables manually before calling GC
-            pdf_bytes = None
-            text = None
-            tables = None
-            table_rows = None
-            multi_chunks = None
-            dl = None
             
             # Explicitly free memory after EVERY SINGLE NOTICE to prevent 16Gi RAM crashes
             gc.collect()
