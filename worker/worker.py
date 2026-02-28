@@ -79,6 +79,7 @@ def ocr_easy(img: Image.Image) -> str:
     for r in res:
         if len(r) >= 2 and r[1].strip():
             lines.append(r[1].strip())
+    del arr
     return "\n".join(lines).strip()
 
 # ---------------- PDF extraction ----------------
@@ -105,6 +106,8 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List[str]]]
                         pix = doc[p_idx - 1].get_pixmap(dpi=150)
                         img = image_from_pixmap(pix)
                         page_text = ocr_easy(img)
+                        del pix
+                        del img
                     except Exception:
                         page_text = page_text or ""
                 if page_text:
@@ -126,16 +129,26 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List[str]]]
                             table_blocks.append(table_text)
                 except Exception:
                     pass
+                finally:
+                    # VERY IMPORTANT: pdfplumber caches parsed objects per page, eating gigabytes of RAM
+                    page.flush_cache()
+                    # Do a mini garbage collect per page for large documents
+                    gc.collect()
+        doc.close()
     except Exception:
         # Very defensive: full OCR fallback with fitz
         try:
             doc = fitz.open(pdf_path)
             for p_idx, page in enumerate(doc, start=1):
-                pix = page.get_pixmap(dpi=200)
+                pix = page.get_pixmap(dpi=150) # Fallback to 150 DPI to save ram
                 img = image_from_pixmap(pix)
                 page_text = ocr_easy(img)
                 if page_text:
                     page_texts.append(f"[PAGE:{p_idx}]\n" + page_text)
+                del pix
+                del img
+                gc.collect()
+            doc.close()
         except Exception as e2:
             print("Critical: full fallback failed:", e2)
 
