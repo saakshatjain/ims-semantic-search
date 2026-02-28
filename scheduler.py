@@ -29,9 +29,10 @@ def job():
 # Run the job immediately on startup to catch up
 job()
 
-# Schedule the job to run between 9:30 AM and 5:30 PM IST (which is roughly every hour)
-# If you want it to mirror the previous cron ('0 4-12 * * *' in UTC), you can just run every hour:
-schedule.every(1).hours.do(job)
+# Schedule the job to run every 15 minutes.
+# This ensures notices are fetched quickly AND inherently acts as activity 
+# to help keep the Hugging Face Space from freezing.
+schedule.every(15).minutes.do(job)
 
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -48,7 +49,7 @@ def start_server():
 # Start the web server in a background thread
 threading.Thread(target=start_server, daemon=True).start()
 
-print("🚀 Background scheduler started! Running scraper & worker every hour.", flush=True)
+print("🚀 Background scheduler started! Running scraper & worker every 15 minutes.", flush=True)
 
 while True:
     schedule.run_pending()
