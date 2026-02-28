@@ -3,6 +3,8 @@ import time
 import subprocess
 import os
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 def job():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Starting Scraper and Worker pipeline...", flush=True)
@@ -30,6 +32,21 @@ job()
 # Schedule the job to run between 9:30 AM and 5:30 PM IST (which is roughly every hour)
 # If you want it to mirror the previous cron ('0 4-12 * * *' in UTC), you can just run every hour:
 schedule.every(1).hours.do(job)
+
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b"Scheduler is running!")
+
+def start_server():
+    server = HTTPServer(('0.0.0.0', 7860), DummyHandler)
+    print("Starting dummy server on port 7860 for health checks...", flush=True)
+    server.serve_forever()
+
+# Start the web server in a background thread
+threading.Thread(target=start_server, daemon=True).start()
 
 print("🚀 Background scheduler started! Running scraper & worker every hour.", flush=True)
 
