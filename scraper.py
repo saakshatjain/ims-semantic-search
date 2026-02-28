@@ -186,7 +186,8 @@ def run_scraper():
             seen.add(url)
             links.append((url, text, date_str))
 
-    # We do not limit to 30 anymore to ensure we fetch EVERYTHING since Jan 1 2026
+    # Limit to 30 documents as requested
+    links = links[:30]
     new_inserted = False
 
     for i, (url, anchor_text, date_str) in enumerate(links, 1):
