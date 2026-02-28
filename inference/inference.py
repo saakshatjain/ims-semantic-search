@@ -16,20 +16,12 @@ tokenizer = AutoTokenizer.from_pretrained("./model/qwen-lora", trust_remote_code
 model = AutoModelForCausalLM.from_pretrained("./model/qwen-lora", trust_remote_code=True)
 
 def supabase_vector_query(query_vec, top_k=20):
-    sql = """
-    select id, notice_id, chunk_text,
-           1 - (embedding <=> %(vec)s) as similarity
-    from notice_chunks
-    order by embedding <=> %(vec)s
-    limit %(top_k)s;
-    """
-
-    res = supabase.postgres.rpc("exec_sql", {
-        "query": sql,
-        "params": {"vec": query_vec, "top_k": top_k}
-    }).execute()
-
-    return res.data
+    # Call the actual RPC we just fixed, which correctly queries notice_chunks_new_2
+    res = supabase.rpc(
+        "match_notice_chunks",
+        {"query_embedding": query_vec, "match_count": top_k}
+    ).execute()
+    return res.data or []
 
 def ask_high_accuracy(question: str):
     # Step 1: embed query
@@ -46,10 +38,15 @@ def ask_high_accuracy(question: str):
     scores = reranker.predict(pairs)
 
     ranked = sorted(zip(rows, scores), key=lambda x: x[1], reverse=True)
-    top_chunks = [r[0]["chunk_text"] for r in ranked[:4]]
+    
+    top_chunks = []
+    for r, score in ranked[:4]:
+        title = r.get("notice_title") or "Unknown Document"
+        text = r.get("chunk_text") or ""
+        top_chunks.append(f"[Source: {title}]\n{text}")
 
     # Step 4: merge context
-    context = "\n\n".join(top_chunks)
+    context = "\n\n---\n\n".join(top_chunks)
 
     # Step 5: run through LLM
     prompt = f"""

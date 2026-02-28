@@ -51,15 +51,19 @@ embed_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 ocr_reader = easyocr.Reader(['en'], gpu=False)  # CPU
 
 # ---------------- utilities ----------------
-_sentence_split_re = re.compile(r'(?<=[.!?])\s+|\n+')
+_recent_newlines_re = re.compile(r'(?<!\n)\n(?!\n)')
+_sentence_split_re = re.compile(r'(?<=[.!?])\s+(?=[A-Z0-9])|\n{2,}')
 
 def split_into_sentences(text: str) -> List[str]:
     if not text:
         return []
-    parts = [p.strip() for p in _sentence_split_re.split(text) if p.strip()]
+    # Replace single newlines with space to prevent random sentence breaks mid-line,
+    # but keep double newlines intact to respect paragraph boundaries.
+    cleaned_text = _recent_newlines_re.sub(' ', text)
+    parts = [p.strip() for p in _sentence_split_re.split(cleaned_text) if p.strip()]
     if not parts:
         # fallback: split by newline
-        parts = [p.strip() for p in text.splitlines() if p.strip()]
+        parts = [p.strip() for p in cleaned_text.splitlines() if p.strip()]
     return parts
 
 def words_in(text: str) -> int:
@@ -327,7 +331,10 @@ def upsert_row_embeddings(notice_id: str, filename: str, rows: List[Dict[str, An
     total = len(records)
     for s in range(0, total, EMBED_BATCH):
         e = min(total, s + EMBED_BATCH)
-        texts = [rec["chunk_text"] for rec in records[s:e]]
+        texts = []
+        for rec in records[s:e]:
+            prefix = f"[Notice: {notice_title}] " if notice_title else ""
+            texts.append(prefix + rec["chunk_text"])
         vecs = embed_model.encode(texts, convert_to_numpy=True).tolist()
         for i, v in enumerate(vecs):
             records[s + i]["embedding"] = v
@@ -376,7 +383,10 @@ def upsert_multirow_chunks(notice_id: str, filename: str, chunks: List[Dict[str,
     total = len(records)
     for s in range(0, total, EMBED_BATCH):
         e = min(total, s + EMBED_BATCH)
-        texts = [rec["chunk_text"] for rec in records[s:e]]
+        texts = []
+        for rec in records[s:e]:
+            prefix = f"[Notice: {notice_title}]\n" if notice_title else ""
+            texts.append(prefix + rec["chunk_text"])
         vecs = embed_model.encode(texts, convert_to_numpy=True).tolist()
         for i, v in enumerate(vecs):
             records[s + i]["embedding"] = v
@@ -428,7 +438,9 @@ def chunk_text_semantic(
         similarities.append(sim)
         
     # Split points: bottom 25th percentile of similarities (most dissimilar transitions)
-    threshold = float(np.percentile(similarities, 25))
+    # Cap threshold at 0.60 to avoid splitting highly coherent documents randomly
+    raw_threshold = float(np.percentile(similarities, 25))
+    threshold = min(raw_threshold, 0.60)
 
     chunks = []
     current_chunk = [sentences[0]]

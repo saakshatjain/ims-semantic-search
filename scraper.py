@@ -47,7 +47,7 @@ def clean_notice_title(anchor_text: str | None) -> str | None:
     title = re.sub(r"\s+", " ", anchor_text).strip()
     return title
 
-def save_to_supabase(file_bytes, url, notice_title: str | None):
+def save_to_supabase(file_bytes, url, notice_title: str | None, notice_date: str | None = None):
     notice_id = hashlib.sha256(file_bytes).hexdigest()[:32]
 
     if notice_exists(notice_id):
@@ -66,6 +66,15 @@ def save_to_supabase(file_bytes, url, notice_title: str | None):
         # If upload fails, do NOT insert into DB, otherwise Worker will fail with 'Object not found'
         return False
 
+    # Try to use the parsed notice_date for uploaded_at, otherwise fallback to current time
+    uploaded_at_val = datetime.now(timezone.utc).isoformat()
+    if notice_date:
+        try:
+            dt = datetime.strptime(notice_date, "%d-%m-%Y")
+            uploaded_at_val = dt.replace(tzinfo=timezone.utc).isoformat()
+        except Exception:
+            pass
+
     # Insert metadata in DB
     try:
         supabase.table("notices_new_2").insert({
@@ -73,7 +82,7 @@ def save_to_supabase(file_bytes, url, notice_title: str | None):
             "url": url,
             "filename": filename,
             "status": "pending",
-            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+            "uploaded_at": uploaded_at_val,
             "notice_title": notice_title,
         }).execute()
     except Exception as e:
@@ -124,8 +133,25 @@ def run_scraper():
         return False
 
     raw_entries = []
-    for a in soup.find_all("a", href=True):
-        raw_entries.append((a["href"], a.get_text(strip=True) or None))
+    
+    # helper to parse table rows
+    def parse_rows(soup_obj):
+        for tr in soup_obj.find_all("tr"):
+            tds = tr.find_all("td")
+            if not tds:
+                continue
+            date_str = None
+            # The date is usually in the first TD as text
+            date_text = tds[0].get_text(strip=True)
+            date_m = re.search(r"(\d{2}-\d{2}-\d{4})", date_text)
+            if date_m:
+                date_str = date_m.group(1)
+                
+            a_tag = tr.find("a", href=True)
+            if a_tag:
+                raw_entries.append((a_tag["href"], a_tag.get_text(strip=True) or None, date_str))
+
+    parse_rows(soup)
 
     # Archive notices
     try:
@@ -137,23 +163,33 @@ def run_scraper():
         )
         resp_arch.raise_for_status()
         soup_arch = BeautifulSoup(resp_arch.text, "html.parser")
-        for a in soup_arch.find_all("a", href=True):
-            raw_entries.append((a["href"], a.get_text(strip=True) or None))
+        parse_rows(soup_arch)
     except Exception as e:
         print(f"⚠️ Failed to fetch archive (continuing with recent only): {e}")
 
+    TARGET_DATE = datetime(2026, 1, 1)
     seen = set()
     links = []
-    for href, text in raw_entries:
+    
+    for href, text, date_str in raw_entries:
+        # Filter strictly by 1 Jan 2026 onwards
+        if date_str:
+            try:
+                dt = datetime.strptime(date_str, "%d-%m-%Y")
+                if dt < TARGET_DATE:
+                    continue  # Skip older notices
+            except Exception:
+                pass # If date doesn't parse cleanly, rely on URL deduplication
+
         url = href if href.startswith("http") else f"{BASE}/{href}"
         if url not in seen:
             seen.add(url)
-            links.append((url, text))
+            links.append((url, text, date_str))
 
-    links = links[:30]
+    # We do not limit to 30 anymore to ensure we fetch EVERYTHING since Jan 1 2026
     new_inserted = False
 
-    for i, (url, anchor_text) in enumerate(links, 1):
+    for i, (url, anchor_text, date_str) in enumerate(links, 1):
         url = url.replace("/view", "/edit")
         notice_title = clean_notice_title(anchor_text)
         
@@ -204,9 +240,9 @@ def run_scraper():
                 if "application/pdf" in r.headers.get("Content-Type", "") or (r.content and r.content[:4] == b"%PDF"):
                     content = r.content
 
-            # Save if we got content
+            # Save if we got content    
             if content:
-                if save_to_supabase(content, url, notice_title):
+                if save_to_supabase(content, url, notice_title, notice_date=date_str):
                     new_inserted = True
             
         except Exception as e:
