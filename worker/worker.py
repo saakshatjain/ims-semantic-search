@@ -48,7 +48,11 @@ ROW_CHUNK_OVERLAP = int(os.environ.get("ROW_CHUNK_OVERLAP", 2))      # overlap r
 # ---------------- clients ----------------
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 embed_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-ocr_reader = easyocr.Reader(['en'], gpu=False)  # CPU
+try:
+    ocr_reader = easyocr.Reader(['en'], gpu=False)  # CPU
+except Exception as e:
+    print(f"⚠️ Warning: Failed to load EasyOCR (Likely 502 Server Error on jaided.ai). Skipping OCR module: {e}")
+    ocr_reader = None
 
 # ---------------- utilities ----------------
 _recent_newlines_re = re.compile(r'(?<!\n)\n(?!\n)')
@@ -73,6 +77,8 @@ def image_from_pixmap(pix) -> Image.Image:
     return Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
 
 def ocr_easy(img: Image.Image) -> str:
+    if ocr_reader is None:
+        return ""
     arr = np.array(img)
     res = ocr_reader.readtext(arr)
     lines = []
