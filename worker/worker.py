@@ -4,7 +4,7 @@
 Worker with table->row conversion + row-level embeddings + optional multi-row chunks.
 """
 
-import os, io, json, uuid, tempfile, re
+import os, io, json, uuid, tempfile, re, signal
 from datetime import datetime
 from typing import List, Optional, Tuple, Dict, Any
 import numpy as np
@@ -17,7 +17,9 @@ from supabase import create_client
 from sentence_transformers import SentenceTransformer
 
 import easyocr
+import logging
 
+logging.getLogger("pdfminer").setLevel(logging.ERROR)
 # Optional camelot (only if you installed it and ghostscript)
 try:
     import camelot
@@ -87,10 +89,11 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List[str]]]
     table_blocks: List[str] = []
 
     try:
+        doc = fitz.open(pdf_path)
         with pdfplumber.open(pdf_path) as pdf:
-            doc = fitz.open(pdf_path)
             for p_idx, page in enumerate(pdf.pages, start=1):
-                page_text = (page.extract_text() or "").strip()
+                # Use fitz for much faster and error-free text extraction
+                page_text = (doc[p_idx - 1].get_text() or "").strip()
                 # if page_text is very small → OCR the page image
                 if not page_text or len(page_text) < OCR_THRESHOLD_CHARS:
                     try:
@@ -530,6 +533,9 @@ def create_text_chunk_embeddings_and_store(
     return total
 
 # ---------------- main worker ----------------
+def timeout_handler(signum, frame):
+    raise TimeoutError("Processing file took too long (timeout)")
+
 def process_pending(limit: int = 15):
     print("Fetching pending notices...")
     res = (
@@ -554,6 +560,10 @@ def process_pending(limit: int = 15):
         # mark processing
         supabase.table("notices_new_2").update({"status": "processing"}).eq("id", nid).execute()
         try:
+            # Set a 5-minute timeout for processing a single PDF
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(300)
+
             dl = supabase.storage.from_("notices_new_2").download(clean_filename)
             pdf_bytes = dl.read() if hasattr(dl, "read") else dl
             text, tables = extract_text_and_tables(pdf_bytes)
@@ -609,6 +619,9 @@ def process_pending(limit: int = 15):
             supabase.table("notices_new_2").update(
                 {"status": "failed", "error_msg": str(e)}
             ).eq("id", nid).execute()
+        finally:
+            # Disable the alarm
+            signal.alarm(0)
 
 # ---------------- backfill existing processed ----------------
 def rechunk_all_processed(batch_size: int = 50):
