@@ -4,7 +4,7 @@
 Worker with table->row conversion + row-level embeddings + optional multi-row chunks.
 """
 
-import os, io, json, uuid, tempfile, re, signal
+import os, io, json, uuid, tempfile, re, signal, gc
 from datetime import datetime
 from typing import List, Optional, Tuple, Dict, Any
 import numpy as np
@@ -548,8 +548,8 @@ def create_text_chunk_embeddings_and_store(
 def timeout_handler(signum, frame):
     raise TimeoutError("Processing file took too long (timeout)")
 
-def process_pending(limit: int = 15):
-    print("Fetching pending notices...")
+def process_pending(limit: int = 3):
+    print(f"Fetching up to {limit} pending notices...")
     res = (
     supabase.table("notices_new_2")
     .select("*")
@@ -629,11 +629,14 @@ def process_pending(limit: int = 15):
         except Exception as e:
             print("❌ failed:", fname, str(e))
             supabase.table("notices_new_2").update(
-                {"status": "failed", "error_msg": str(e)}
+                {"status": "failed", "error_msg": str(e)[:500]}
             ).eq("id", nid).execute()
         finally:
             # Disable the alarm
             signal.alarm(0)
+            
+            # Explicitly free memory to prevent 16Gi RAM crashes on Hugging Face
+            gc.collect()
 
 # ---------------- backfill existing processed ----------------
 def rechunk_all_processed(batch_size: int = 50):
@@ -666,4 +669,4 @@ def rechunk_all_processed(batch_size: int = 50):
         offset += batch_size
 
 if __name__ == "__main__":
-    process_pending(limit=15)
+    process_pending(limit=3)
