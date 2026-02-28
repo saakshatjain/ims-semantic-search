@@ -9,6 +9,7 @@ on:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    timeout-minutes: 360  # Allows the job to run up to 6 hours
 
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
