@@ -50,7 +50,23 @@ ROW_CHUNK_OVERLAP = int(os.environ.get("ROW_CHUNK_OVERLAP", 2))      # overlap r
 # ---------------- clients ----------------
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 embed_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-ocr_reader = easyocr.Reader(['en'], gpu=False)  # CPU
+
+# Lazy-loaded OCR reader (saves ~500MB RAM when not needed)
+_ocr_reader = None
+
+def _get_ocr_reader():
+    global _ocr_reader
+    if _ocr_reader is None:
+        print("  🔤 Loading EasyOCR model (first OCR request)...")
+        _ocr_reader = easyocr.Reader(['en'], gpu=False)
+    return _ocr_reader
+
+def _unload_ocr_reader():
+    global _ocr_reader
+    if _ocr_reader is not None:
+        del _ocr_reader
+        _ocr_reader = None
+        gc.collect()
 
 # ---------------- utilities ----------------
 _recent_newlines_re = re.compile(r'(?<!\n)\n(?!\n)')
@@ -76,7 +92,8 @@ def image_from_pixmap(pix) -> Image.Image:
 
 def ocr_easy(img: Image.Image) -> str:
     arr = np.array(img)
-    res = ocr_reader.readtext(arr)
+    reader = _get_ocr_reader()
+    res = reader.readtext(arr)
     lines = []
     for r in res:
         if len(r) >= 2 and r[1].strip():
@@ -682,7 +699,10 @@ def process_pending(limit: int = 5) -> int:
             # Disable the alarm
             signal.alarm(0)
             
-            # Explicitly free memory after EVERY SINGLE NOTICE to prevent 16Gi RAM crashes
+            # Unload OCR model if it was loaded (frees ~500MB RAM)
+            _unload_ocr_reader()
+            
+            # Explicitly free memory after EVERY SINGLE NOTICE to prevent RAM crashes
             gc.collect()
             
     return len(notices)
