@@ -4,8 +4,10 @@
 Worker with table->row conversion + row-level embeddings + optional multi-row chunks.
 """
 
-import os, io, json, uuid, tempfile, re, signal, gc
-from datetime import datetime
+import os, io, json, uuid, tempfile, re, signal, gc, time
+from dotenv import load_dotenv
+load_dotenv()
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple, Dict, Any
 import numpy as np
 
@@ -83,7 +85,13 @@ def ocr_easy(img: Image.Image) -> str:
 
 # ---------------- PDF extraction ----------------
 def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List[str]]]:
-    """Extracts page-by-page text and tables. Returns combined_text and tables list (or None)."""
+    """Extracts page-by-page text and tables. Returns combined_text and tables list (or None).
+    
+    Text extraction priority per page:
+      1. fitz (PyMuPDF) - fastest
+      2. pdfplumber    - fallback for pages where fitz returns too little
+      3. EasyOCR       - last resort for truly scanned/image pages
+    """
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(pdf_bytes)
         tmp.flush()
@@ -94,29 +102,47 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List[str]]]
 
     try:
         doc = fitz.open(pdf_path)
+        total_pages = len(doc)
         with pdfplumber.open(pdf_path) as pdf:
             for p_idx, page in enumerate(pdf.pages, start=1):
-                # Use fitz for much faster and error-free text extraction
+                page_start = time.time()
+
+                # --- TEXT EXTRACTION (3-tier fallback) ---
+                # Tier 1: fitz (fastest)
                 page_text = (doc[p_idx - 1].get_text() or "").strip()
-                # if page_text is very small → OCR the page image
+
+                # Tier 2: pdfplumber text extraction (handles cases fitz misses)
+                if not page_text or len(page_text) < OCR_THRESHOLD_CHARS:
+                    fitz_len = len(page_text) if page_text else 0
+                    try:
+                        plumber_text = (page.extract_text() or "").strip()
+                        if plumber_text and len(plumber_text) >= OCR_THRESHOLD_CHARS:
+                            page_text = plumber_text
+                            print(f"  📄 page {p_idx}: pdfplumber fallback recovered {len(plumber_text)} chars (fitz had {fitz_len})")
+                    except Exception:
+                        pass
+
+                # Tier 3: OCR - only for truly image-based pages
                 if not page_text or len(page_text) < OCR_THRESHOLD_CHARS:
                     try:
-                        # Use 150 DPI instead of 300 DPI to avoid GitHub Actions OOM crashes
-                        pix = doc[p_idx - 1].get_pixmap(dpi=300)
+                        print(f"  🔍 page {p_idx}/{total_pages}: OCR needed (text so far: {len(page_text) if page_text else 0} chars)")
+                        pix = doc[p_idx - 1].get_pixmap(dpi=150)
                         img = image_from_pixmap(pix)
                         page_text = ocr_easy(img)
+                        # Aggressively free OCR memory
+                        del pix, img
+                        gc.collect()
                     except Exception:
                         page_text = page_text or ""
+
                 if page_text:
-                    # prefix page header to preserve provenance
                     page_text = f"[PAGE:{p_idx}]\n" + page_text
                     page_texts.append(page_text)
 
-                # extract tables via pdfplumber
+                # --- TABLE EXTRACTION ---
                 try:
                     ptables = page.extract_tables()
                     for t in ptables:
-                        # t is list of row-lists
                         if t and any(any(cell for cell in row if cell) for row in t):
                             rows = [
                                 " | ".join([str(cell) if cell is not None else "" for cell in row])
@@ -126,14 +152,20 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Tuple[str, Optional[List[str]]]
                             table_blocks.append(table_text)
                 except Exception:
                     pass
+
+                page_elapsed = time.time() - page_start
+                if page_elapsed > 2.0:
+                    print(f"  ⏱ page {p_idx}/{total_pages} took {page_elapsed:.1f}s")
     except Exception:
         # Very defensive: full OCR fallback with fitz
         try:
             doc = fitz.open(pdf_path)
             for p_idx, page in enumerate(doc, start=1):
-                pix = page.get_pixmap(dpi=300)
+                pix = page.get_pixmap(dpi=150)
                 img = image_from_pixmap(pix)
                 page_text = ocr_easy(img)
+                del pix, img
+                gc.collect()
                 if page_text:
                     page_texts.append(f"[PAGE:{p_idx}]\n" + page_text)
         except Exception as e2:
@@ -338,7 +370,7 @@ def upsert_row_embeddings(notice_id: str, filename: str, rows: List[Dict[str, An
         vecs = embed_model.encode(texts, convert_to_numpy=True).tolist()
         for i, v in enumerate(vecs):
             records[s + i]["embedding"] = v
-            records[s + i]["processed_at"] = datetime.utcnow().isoformat()
+            records[s + i]["processed_at"] = datetime.now(timezone.utc).isoformat()
 
     # upsert in batches
     for s in range(0, total, INSERT_BATCH):
@@ -390,7 +422,7 @@ def upsert_multirow_chunks(notice_id: str, filename: str, chunks: List[Dict[str,
         vecs = embed_model.encode(texts, convert_to_numpy=True).tolist()
         for i, v in enumerate(vecs):
             records[s + i]["embedding"] = v
-            records[s + i]["processed_at"] = datetime.utcnow().isoformat()
+            records[s + i]["processed_at"] = datetime.now(timezone.utc).isoformat()
 
     for s in range(0, total, INSERT_BATCH):
         e = min(total, s + INSERT_BATCH)
@@ -529,7 +561,7 @@ def create_text_chunk_embeddings_and_store(
         for offset, v in enumerate(vecs):
             idx = s + offset
             rows[idx]["embedding"] = v
-            rows[idx]["processed_at"] = datetime.utcnow().isoformat()
+            rows[idx]["processed_at"] = datetime.now(timezone.utc).isoformat()
 
     for s in range(0, total, INSERT_BATCH):
         eend = min(total, s + INSERT_BATCH)
@@ -581,16 +613,20 @@ def process_pending(limit: int = 5) -> int:
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(300)
 
+            t0 = time.time()
             dl = supabase.storage.from_("notices_new_2").download(clean_filename)
             pdf_bytes = dl.read() if hasattr(dl, "read") else dl
+            print(f"  ⏱ download: {time.time()-t0:.1f}s, size: {len(pdf_bytes)/1024:.0f}KB")
+
+            t1 = time.time()
             text, tables = extract_text_and_tables(pdf_bytes)
+            print(f"  ⏱ extract_text_and_tables: {time.time()-t1:.1f}s, text_len: {len(text)}, tables: {len(tables) if tables else 0}")
 
             # parse tables into rows (structured)
             table_rows = rows_from_table_blocks(tables)
 
-            # Optionally: for very large date-sheets you may choose to skip prose chunking,
-            # but here we do both: prose + row embeddings.
-            # 1) create prose text chunks and embeddings (existing behavior)
+            # 1) create prose text chunks and embeddings
+            t2 = time.time()
             text_cnt = create_text_chunk_embeddings_and_store(
                 notice_id=nid,
                 filename=fname,
@@ -598,16 +634,20 @@ def process_pending(limit: int = 5) -> int:
                 notice_title=title,
                 uploaded_at=n.get("uploaded_at")
             )
+            print(f"  ⏱ text_chunk_embed: {time.time()-t2:.1f}s, chunks: {text_cnt}")
 
             # 2) upsert one embedding per table row
+            t3 = time.time()
             rows_cnt = upsert_row_embeddings(
                 notice_id=nid,
                 filename=fname,
                 rows=table_rows,
                 notice_title=title
             )
+            print(f"  ⏱ row_embeddings: {time.time()-t3:.1f}s, rows: {rows_cnt}")
 
             # 3) optionally create multi-row chunks for context
+            t4 = time.time()
             multi_chunks = chunk_table_rows(table_rows, max_rows=MAX_ROWS_PER_CHUNK, overlap=ROW_CHUNK_OVERLAP)
             multi_cnt = upsert_multirow_chunks(
                 notice_id=nid,
@@ -615,12 +655,13 @@ def process_pending(limit: int = 5) -> int:
                 chunks=multi_chunks,
                 notice_title=title
             )
+            print(f"  ⏱ multi_row_chunks: {time.time()-t4:.1f}s, chunks: {multi_cnt}")
 
             # store OCR text + raw tables JSON for debugging & possible future reprocessing
             supabase.table("notices_new_2").update({
                 "ocr_text": text,
                 "ocr_tables": json.dumps(tables) if tables else None,
-                "processed_at": datetime.utcnow().isoformat()
+                "processed_at": datetime.now(timezone.utc).isoformat()
             }).eq("id", nid).execute()
 
             # finalize
@@ -630,7 +671,8 @@ def process_pending(limit: int = 5) -> int:
             }).eq("id", nid).execute()
 
             total_chunks = text_cnt + rows_cnt + multi_cnt
-            print(f"✅ processed {fname} → text_chunks: {text_cnt}, row_chunks: {rows_cnt}, multi_chunks: {multi_cnt} (total {total_chunks})")
+            total_time = time.time() - t0
+            print(f"✅ processed {fname} → text_chunks: {text_cnt}, row_chunks: {rows_cnt}, multi_chunks: {multi_cnt} (total {total_chunks}) in {total_time:.1f}s")
         except Exception as e:
             print("❌ failed:", fname, str(e))
             supabase.table("notices_new_2").update(
