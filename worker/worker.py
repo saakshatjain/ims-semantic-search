@@ -554,6 +554,7 @@ def process_pending(limit: int = 3):
     supabase.table("notices_new_2")
     .select("*")
     .in_("status", ["pending", "failed"])
+    .limit(limit)
     .execute()
 )
 
