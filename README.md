@@ -63,7 +63,7 @@ This is the **key differentiator**. For PDFs containing tables (exam schedules, 
 3. **Individually embedded** with the notice title prepended for context
 4. Stored with extracted metadata (roll numbers, application IDs, course codes via regex)
 
-This enables queries like *"Is 2025UCA1849 selected in CPVS?"* to directly match the exact row, something impossible with traditional fixed-window chunking.
+This enables queries to directly match the exact row, something impossible with traditional fixed-window chunking.
 
 ```
 Row limit: 500 per notice (capped to prevent timeouts on massive tables)
