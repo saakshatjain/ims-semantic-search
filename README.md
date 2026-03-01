@@ -10,27 +10,37 @@
 flowchart TB
     subgraph Ingestion["🔄 Ingestion Pipeline"]
         direction TB
-        A(["⏰ Start: Cron Scheduler"]) --> B["📥 Fetch Notices \n(IMS)"]
+        A(["⏰ Start: Cron Scheduler"]) --> B["📥 Fetch Notices<br/>(IMS)"]
         B --> C{"Is Scanned?"}
         C -- Yes --> D["🔍 Apply EasyOCR"]
-        C -- No --> E["📄 Hybrid Parse \n(Text & Tables)"]
+        C -- No --> E["📄 Hybrid Parse<br/>(Text & Tables)"]
         D -.-> E
-        E --> F["✂️ Three-Tier \nSemantic Chunking"]
-        F --> G["📊 Hybrid Indexing \n(Dense + Sparse)"]
-        G --> H[("🗄️ Supabase \nVector DB")]
+        E --> F["✂️ Three-Tier<br/>Semantic Chunking"]
+        F --> G["📊 Hybrid Indexing<br/>(Dense + Sparse)"]
+        G --> H[("🗄️ Supabase<br/>Vector DB")]
     end
 
     subgraph Retrieval["🔎 Retrieval Pipeline"]
         direction TB
         I(["💬 User Query"]) --> J["🔤 Query Encoding"]
         J --> K["🔀 Hybrid Search"]
-        K --> L["🎯 Context Re-Ranking \n(Cohere)"]
-        L --> M["🤖 LLM Generation \n(Groq)"]
+        K --> L["🎯 Context Re-Ranking<br/>(Cohere)"]
+        L --> M["🤖 LLM Generation<br/>(Groq)"]
         M --> N["📝 Response + Citation"]
     end
 
     H -. "Retrieve Context" .-> K
 ```
+
+## 🚀 Deployment
+
+| Component | Platform | URL |
+|-----------|----------|-----|
+| **Frontend** | Vercel | [nsutbot.vercel.app](https://nsutbot.vercel.app) |
+| **Backend** | Render | [ims-btp-backend.onrender.com](https://ims-btp-backend.onrender.com) |
+| **Retriever** | Render | [ims-semantic-search.onrender.com](https://ims-semantic-search.onrender.com) |
+
+---
 
 ## 📦 Tech Stack
 
