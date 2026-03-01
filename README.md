@@ -6,16 +6,30 @@
 
 ## 🏗️ Architecture Overview
 
-```
-┌─────────────┐     ┌──────────────┐     ┌──────────────┐     ┌───────────────┐
-│   Scraper    │────▶│   Supabase   │◀────│    Worker    │────▶│  Supabase     │
-│ (scraper.py) │     │  (notices)   │     │ (worker.py)  │     │ (pgvector)    │
-└─────────────┘     └──────────────┘     └──────────────┘     └───────┬───────┘
-                                                                      │
-                    ┌──────────────┐     ┌──────────────┐             │
-                    │   Frontend   │◀────│   API Server │◀────────────┘
-                    │  (Next.js)   │     │  (FastAPI)   │  Hybrid Search
-                    └──────────────┘     └──────────────┘  + Cohere Rerank
+```mermaid
+flowchart TB
+    subgraph Ingestion["🔄 Ingestion Pipeline"]
+        direction TB
+        A(["⏰ Start: Cron Scheduler"]) --> B["📥 Fetch Notices \n(IMS)"]
+        B --> C{"Is Scanned?"}
+        C -- Yes --> D["🔍 Apply EasyOCR"]
+        C -- No --> E["📄 Hybrid Parse \n(Text & Tables)"]
+        D -.-> E
+        E --> F["✂️ Three-Tier \nSemantic Chunking"]
+        F --> G["📊 Hybrid Indexing \n(Dense + Sparse)"]
+        G --> H[("🗄️ Supabase \nVector DB")]
+    end
+
+    subgraph Retrieval["🔎 Retrieval Pipeline"]
+        direction TB
+        I(["💬 User Query"]) --> J["🔤 Query Encoding"]
+        J --> K["🔀 Hybrid Search"]
+        K --> L["🎯 Context Re-Ranking \n(Cohere)"]
+        L --> M["🤖 LLM Generation \n(Groq)"]
+        M --> N["📝 Response + Citation"]
+    end
+
+    H -. "Retrieve Context" .-> K
 ```
 
 ## 📦 Tech Stack
@@ -31,6 +45,9 @@
 | **Reranking** | Cohere `rerank-english-v3.0` | Cross-encoder reranking for precision |
 | **Fusion** | Reciprocal Rank Fusion (RRF) | Merges dense + sparse retrieval scores |
 | **Orchestration** | GitHub Actions | Hourly pipeline (9AM–5PM IST) |
+| **Frontend** | React + JavaScript | Chat interface deployed on Vercel |
+| **Backend** | Python (FastAPI) | API server, scraper, and worker pipeline |
+| **LLM** | Groq | Fast inference for response generation |
 
 ---
 
