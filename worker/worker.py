@@ -10,6 +10,7 @@ load_dotenv()
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple, Dict, Any
 import numpy as np
+import torch
 
 import fitz              # PyMuPDF
 import pdfplumber
@@ -57,8 +58,9 @@ _ocr_reader = None
 def _get_ocr_reader():
     global _ocr_reader
     if _ocr_reader is None:
-        print("  🔤 Loading EasyOCR model (first OCR request)...")
-        _ocr_reader = easyocr.Reader(['en'], gpu=False)
+        use_gpu = torch.cuda.is_available()
+        print(f"  🔤 Loading EasyOCR model (GPU={use_gpu})...")
+        _ocr_reader = easyocr.Reader(['en'], gpu=use_gpu)
     return _ocr_reader
 
 def _unload_ocr_reader():
@@ -378,7 +380,8 @@ def upsert_row_embeddings(notice_id: str, filename: str, rows: List[Dict[str, An
 
     # embed in batches
     total = len(records)
-    for s in range(0, total, EMBED_BATCH):
+    embed_batches = (total + EMBED_BATCH - 1) // EMBED_BATCH
+    for batch_num, s in enumerate(range(0, total, EMBED_BATCH), 1):
         e = min(total, s + EMBED_BATCH)
         texts = []
         for rec in records[s:e]:
@@ -388,9 +391,11 @@ def upsert_row_embeddings(notice_id: str, filename: str, rows: List[Dict[str, An
         for i, v in enumerate(vecs):
             records[s + i]["embedding"] = v
             records[s + i]["processed_at"] = datetime.now(timezone.utc).isoformat()
+        print(f"    🧠 embedding rows: batch {batch_num}/{embed_batches} ({e}/{total} rows)", flush=True)
 
     # upsert in batches
-    for s in range(0, total, INSERT_BATCH):
+    upsert_batches = (total + INSERT_BATCH - 1) // INSERT_BATCH
+    for batch_num, s in enumerate(range(0, total, INSERT_BATCH), 1):
         e = min(total, s + INSERT_BATCH)
         batch = records[s:e]
         try:
@@ -401,6 +406,7 @@ def upsert_row_embeddings(notice_id: str, filename: str, rows: List[Dict[str, An
                     supabase.table("notice_chunks_new_2").insert(r).execute()
                 except Exception as e:
                     print("row chunk insert failed", r["id"], str(e))
+        print(f"    📤 upserting rows: batch {batch_num}/{upsert_batches} ({min(e, total)}/{total} rows)", flush=True)
     return total
 
 def upsert_multirow_chunks(notice_id: str, filename: str, chunks: List[Dict[str, Any]], notice_title: Optional[str] = None) -> int:
@@ -430,7 +436,8 @@ def upsert_multirow_chunks(notice_id: str, filename: str, chunks: List[Dict[str,
         records.append(rec)
 
     total = len(records)
-    for s in range(0, total, EMBED_BATCH):
+    embed_batches = (total + EMBED_BATCH - 1) // EMBED_BATCH
+    for batch_num, s in enumerate(range(0, total, EMBED_BATCH), 1):
         e = min(total, s + EMBED_BATCH)
         texts = []
         for rec in records[s:e]:
@@ -440,8 +447,10 @@ def upsert_multirow_chunks(notice_id: str, filename: str, chunks: List[Dict[str,
         for i, v in enumerate(vecs):
             records[s + i]["embedding"] = v
             records[s + i]["processed_at"] = datetime.now(timezone.utc).isoformat()
+        print(f"    🧠 embedding multi-row chunks: batch {batch_num}/{embed_batches} ({e}/{total})", flush=True)
 
-    for s in range(0, total, INSERT_BATCH):
+    upsert_batches = (total + INSERT_BATCH - 1) // INSERT_BATCH
+    for batch_num, s in enumerate(range(0, total, INSERT_BATCH), 1):
         e = min(total, s + INSERT_BATCH)
         batch = records[s:e]
         try:
@@ -452,6 +461,7 @@ def upsert_multirow_chunks(notice_id: str, filename: str, chunks: List[Dict[str,
                     supabase.table("notice_chunks_new_2").insert(r).execute()
                 except Exception as e:
                     print("multi-row chunk insert failed", r["id"], str(e))
+        print(f"    📤 upserting multi-row chunks: batch {batch_num}/{upsert_batches} ({min(e, total)}/{total})", flush=True)
     return total
 def chunk_text_semantic(
     text: str,
@@ -602,7 +612,7 @@ def process_pending(limit: int = 5) -> int:
     res = (
     supabase.table("notices_new_2")
     .select("*")
-    .in_("status", ["pending", "failed"])
+    .eq("status", "pending")
     .limit(limit)
     .execute()
 )
@@ -626,9 +636,9 @@ def process_pending(limit: int = 5) -> int:
         # mark processing
         supabase.table("notices_new_2").update({"status": "processing"}).eq("id", nid).execute()
         try:
-            # Set a 5-minute timeout for processing a single PDF
+            # Set a 15-minute timeout for processing a single PDF (large tables need time for upserts)
             signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(300)
+            signal.alarm(900)
 
             t0 = time.time()
             dl = supabase.storage.from_("notices_new_2").download(clean_filename)
@@ -653,8 +663,12 @@ def process_pending(limit: int = 5) -> int:
             )
             print(f"  ⏱ text_chunk_embed: {time.time()-t2:.1f}s, chunks: {text_cnt}")
 
-            # 2) upsert one embedding per table row
+            # 2) upsert one embedding per table row (capped to avoid hanging on massive tables)
+            MAX_ROW_EMBEDDINGS = 500
             t3 = time.time()
+            if len(table_rows) > MAX_ROW_EMBEDDINGS:
+                print(f"  ⚠️ capping row embeddings: {len(table_rows)} → {MAX_ROW_EMBEDDINGS} rows")
+                table_rows = table_rows[:MAX_ROW_EMBEDDINGS]
             rows_cnt = upsert_row_embeddings(
                 notice_id=nid,
                 filename=fname,
@@ -662,17 +676,6 @@ def process_pending(limit: int = 5) -> int:
                 notice_title=title
             )
             print(f"  ⏱ row_embeddings: {time.time()-t3:.1f}s, rows: {rows_cnt}")
-
-            # 3) optionally create multi-row chunks for context
-            t4 = time.time()
-            multi_chunks = chunk_table_rows(table_rows, max_rows=MAX_ROWS_PER_CHUNK, overlap=ROW_CHUNK_OVERLAP)
-            multi_cnt = upsert_multirow_chunks(
-                notice_id=nid,
-                filename=fname,
-                chunks=multi_chunks,
-                notice_title=title
-            )
-            print(f"  ⏱ multi_row_chunks: {time.time()-t4:.1f}s, chunks: {multi_cnt}")
 
             # store OCR text + raw tables JSON for debugging & possible future reprocessing
             supabase.table("notices_new_2").update({
@@ -687,9 +690,9 @@ def process_pending(limit: int = 5) -> int:
                 "embedding_model": "all-MiniLM-L6-v2"
             }).eq("id", nid).execute()
 
-            total_chunks = text_cnt + rows_cnt + multi_cnt
+            total_chunks = text_cnt + rows_cnt
             total_time = time.time() - t0
-            print(f"✅ processed {fname} → text_chunks: {text_cnt}, row_chunks: {rows_cnt}, multi_chunks: {multi_cnt} (total {total_chunks}) in {total_time:.1f}s")
+            print(f"✅ processed {fname} → text_chunks: {text_cnt}, row_chunks: {rows_cnt} (total {total_chunks}) in {total_time:.1f}s")
         except Exception as e:
             print("❌ failed:", fname, str(e))
             supabase.table("notices_new_2").update(
